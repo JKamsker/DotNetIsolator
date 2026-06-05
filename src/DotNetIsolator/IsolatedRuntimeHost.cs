@@ -9,7 +9,10 @@ public class IsolatedRuntimeHost : IDisposable
     private const ulong NoMemoryReservationForGrowth = 0;
     private const string WasmAppArgumentZero = "DotNetIsolator.WasmApp.wasm";
 
+    private readonly IsolatedRuntimeHostOptions _options;
+    private readonly object _runtimeMemorySnapshotLock = new();
     private WasiConfiguration? _wasiConfiguration;
+    private RuntimeMemorySnapshot? _runtimeMemorySnapshot;
     private List<AssemblyLoadCallback> _assemblyLoaders = new();
 
     static IsolatedRuntimeHost()
@@ -33,6 +36,7 @@ public class IsolatedRuntimeHost : IDisposable
             throw new ArgumentNullException(nameof(options));
         }
 
+        _options = options;
         Engine = CreateEngine(options);
         Linker = new Linker(Engine);
         Module = PrecompiledModuleCache.LoadOrCompile(Engine, _modulePath, options);
@@ -56,12 +60,22 @@ public class IsolatedRuntimeHost : IDisposable
             throw new ArgumentNullException(nameof(configuration));
         }
 
-        if (_wasiConfiguration is not null)
+        lock (_runtimeMemorySnapshotLock)
         {
-            throw new InvalidOperationException($"{WithWasiConfiguration} can only be called once.");
+            if (_runtimeMemorySnapshot is not null)
+            {
+                throw new InvalidOperationException(
+                    $"{WithWasiConfiguration} cannot be called after the runtime memory snapshot has been initialized.");
+            }
+
+            if (_wasiConfiguration is not null)
+            {
+                throw new InvalidOperationException($"{WithWasiConfiguration} can only be called once.");
+            }
+
+            _wasiConfiguration = configuration;
         }
 
-        _wasiConfiguration = configuration;
         return this;
     }
 
@@ -91,11 +105,51 @@ public class IsolatedRuntimeHost : IDisposable
         });
     }
 
+    public void PreloadRuntimeMemorySnapshot()
+    {
+        if (!_options.UseRuntimeMemorySnapshot)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(IsolatedRuntimeHostOptions.UseRuntimeMemorySnapshot)} must be enabled before preloading the runtime memory snapshot.");
+        }
+
+        _ = GetRuntimeMemorySnapshot();
+    }
+
     public void Dispose()
     {
         Module.Dispose();
         Linker.Dispose();
         Engine.Dispose();
+    }
+
+    internal Store CreateStore(object data)
+    {
+        var store = new Store(Engine);
+        try
+        {
+            store.SetWasiConfiguration(WasiConfigurationOrDefault);
+            store.SetData(data);
+            return store;
+        }
+        catch
+        {
+            store.Dispose();
+            throw;
+        }
+    }
+
+    internal RuntimeMemorySnapshot? GetRuntimeMemorySnapshot()
+    {
+        if (!_options.UseRuntimeMemorySnapshot)
+        {
+            return null;
+        }
+
+        lock (_runtimeMemorySnapshotLock)
+        {
+            return _runtimeMemorySnapshot ??= RuntimeMemorySnapshot.Create(this);
+        }
     }
 
     private static byte[]? LoadAssemblyFromWasmBcl(string assemblyName)

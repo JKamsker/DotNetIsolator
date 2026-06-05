@@ -58,6 +58,9 @@ internal static class Program
 
         PrimeModuleCache(options);
         var warmCacheStartup = MeasureStartup(options, useModuleCache: true, clearCacheBeforeEachSample: false);
+        var warmHostStartup = MeasureWarmHostStartup(options, useRuntimeMemorySnapshot: false);
+        var snapshotPreload = MeasureRuntimeMemorySnapshotPreload(options);
+        var snapshotStartup = MeasureWarmHostStartup(options, useRuntimeMemorySnapshot: true);
 
         Console.WriteLine();
         Console.WriteLine("Steady-state call overhead");
@@ -70,6 +73,9 @@ internal static class Program
         PrintStartup("No module cache", noCacheStartup);
         PrintStartup("Cold module cache", coldCacheStartup);
         PrintStartup("Warm module cache", warmCacheStartup);
+        PrintRuntimeStartup("Warm host", warmHostStartup);
+        Console.WriteLine($"Runtime memory snapshot preload: {FormatDuration(snapshotPreload)}");
+        PrintRuntimeStartup("Warm runtime memory snapshot", snapshotStartup);
 
         Console.WriteLine();
         Console.WriteLine($"Sink: {_sink}");
@@ -171,11 +177,74 @@ internal static class Program
             Median(firstCallTimes));
     }
 
-    private static IsolatedRuntimeHost CreateHost(BenchmarkOptions options, bool useModuleCache)
+    private static StartupMeasurement MeasureWarmHostStartup(BenchmarkOptions options, bool useRuntimeMemorySnapshot)
+    {
+        var runtimeTimes = new List<TimeSpan>();
+        var objectTimes = new List<TimeSpan>();
+        var methodTimes = new List<TimeSpan>();
+        var firstCallTimes = new List<TimeSpan>();
+
+        using var host = CreateHost(options, useModuleCache: true, useRuntimeMemorySnapshot);
+        if (useRuntimeMemorySnapshot)
+        {
+            host.PreloadRuntimeMemorySnapshot();
+        }
+
+        for (var i = 0; i < options.StartupIterations; i++)
+        {
+            MeasureRuntimeStartupOnHost(host, i, runtimeTimes, objectTimes, methodTimes, firstCallTimes);
+        }
+
+        return new StartupMeasurement(
+            Host: TimeSpan.Zero,
+            Median(runtimeTimes),
+            Median(objectTimes),
+            Median(methodTimes),
+            Median(firstCallTimes));
+    }
+
+    private static TimeSpan MeasureRuntimeMemorySnapshotPreload(BenchmarkOptions options)
+    {
+        using var host = CreateHost(options, useModuleCache: true, useRuntimeMemorySnapshot: true);
+        return Time(host.PreloadRuntimeMemorySnapshot);
+    }
+
+    private static void MeasureRuntimeStartupOnHost(
+        IsolatedRuntimeHost host,
+        int sample,
+        List<TimeSpan> runtimeTimes,
+        List<TimeSpan> objectTimes,
+        List<TimeSpan> methodTimes,
+        List<TimeSpan> firstCallTimes)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        using var runtime = new IsolatedRuntime(host);
+        runtimeTimes.Add(stopwatch.Elapsed);
+
+        stopwatch.Restart();
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        objectTimes.Add(stopwatch.Elapsed);
+
+        stopwatch.Restart();
+        var method = target.FindMethod(nameof(BenchmarkTarget.Increment), 1);
+        methodTimes.Add(stopwatch.Elapsed);
+
+        stopwatch.Restart();
+        Consume(method.Invoke<int, int>(target, sample));
+        firstCallTimes.Add(stopwatch.Elapsed);
+
+        target.ReleaseGCHandle();
+    }
+
+    private static IsolatedRuntimeHost CreateHost(
+        BenchmarkOptions options,
+        bool useModuleCache,
+        bool useRuntimeMemorySnapshot = false)
         => new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
         {
             UsePrecompiledModuleCache = useModuleCache,
             PrecompiledModuleCacheDirectory = options.CacheDirectory,
+            UseRuntimeMemorySnapshot = useRuntimeMemorySnapshot,
         }).WithBinDirectoryAssemblyLoader();
 
     private static void PrimeModuleCache(BenchmarkOptions options)
@@ -220,6 +289,13 @@ internal static class Program
         Console.WriteLine(
             $"{name}: host {FormatDuration(measurement.Host)}, runtime {FormatDuration(measurement.Runtime)}, " +
             $"object {FormatDuration(measurement.Object)}, method {FormatDuration(measurement.Method)}, first call {FormatDuration(measurement.FirstCall)}");
+    }
+
+    private static void PrintRuntimeStartup(string name, StartupMeasurement measurement)
+    {
+        Console.WriteLine(
+            $"{name}: runtime {FormatDuration(measurement.Runtime)}, object {FormatDuration(measurement.Object)}, " +
+            $"method {FormatDuration(measurement.Method)}, first call {FormatDuration(measurement.FirstCall)}");
     }
 
     private static string FormatDuration(TimeSpan value)

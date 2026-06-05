@@ -56,6 +56,42 @@ public class StartupTest
     }
 
     [Fact]
+    public void CanStartWithRuntimeMemorySnapshot()
+    {
+        var cacheDirectory = Path.Combine(Path.GetTempPath(), "DotNetIsolator.Test", Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
+            {
+                PrecompiledModuleCacheDirectory = cacheDirectory,
+                UseRuntimeMemorySnapshot = true,
+            }).WithBinDirectoryAssemblyLoader();
+
+            host.PreloadRuntimeMemorySnapshot();
+
+            using (var runtime = new IsolatedRuntime(host))
+            {
+                var target = runtime.CreateObject<StartupTest>();
+                Assert.NotNull(target.FindMethod(nameof(ReturnsInput), 1));
+            }
+
+            using (var runtime = new IsolatedRuntime(host))
+            {
+                runtime.RegisterCallback("snapshot-callback", (int value) => value + 1);
+                var result = runtime.Invoke(() => DotNetIsolatorHost.Invoke<int>("snapshot-callback", 41));
+                Assert.Equal(42, result);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDirectory))
+            {
+                Directory.Delete(cacheDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void CanLoadTypesFromBclAssembliesWithoutAnyLoader()
     {
         using var host = new IsolatedRuntimeHost();
@@ -89,4 +125,7 @@ public class StartupTest
         using var runtime = new IsolatedRuntime(host);
         Assert.NotNull(runtime.CreateObject<StartupTest>());
     }
+
+    public int ReturnsInput(int value)
+        => value;
 }

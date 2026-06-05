@@ -26,32 +26,32 @@ public class IsolatedRuntime : IDisposable
 
     public IsolatedRuntime(IsolatedRuntimeHost host)
     {
-        var store = new Store(host.Engine);
-        store.SetWasiConfiguration(host.WasiConfigurationOrDefault);
-        store.SetData(this);
+        var snapshot = host.GetRuntimeMemorySnapshot();
+        var store = host.CreateStore(this);
 
         _store = store;
         _instance = host.Linker.Instantiate(store, host.Module);
-        _memory = _instance.GetMemory("memory") ?? throw new InvalidOperationException("Couldn't find memory 'memory'");
-        _malloc = _instance.GetFunction<int, int>("malloc")
-            ?? throw new InvalidOperationException("Missing required export 'malloc'");
-        _free = _instance.GetAction<int>("free")
-            ?? throw new InvalidOperationException("Missing required export 'free'");
-        _instantiateDotNetClass = _instance.GetFunction<int, int, int, int, int>("dotnetisolator_instantiate_class")
-            ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_instantiate_class'");
-        _lookupDotNetMethod = _instance.GetFunction<int, int, int, int, int, int, int>("dotnetisolator_lookup_method")
-            ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_lookup_method'");
-        _deserializeAsDotNetObject = _instance.GetFunction<int, int, int>("dotnetisolator_deserialize_object")
-            ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_deserialize_object'");
-        _invokeDotNetMethod = _instance.GetAction<int>("dotnetisolator_invoke_method")
-            ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_method'");
-        _releaseObject = _instance.GetAction<int>("dotnetisolator_release_object")
-            ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_release_object'");
+        var exports = IsolatedRuntimeExports.Bind(_instance);
 
-        _shadowStack = new ShadowStack(_memory, _malloc, _free);
+        _memory = exports.Memory;
+        _malloc = exports.Malloc;
+        _free = exports.Free;
+        _instantiateDotNetClass = exports.InstantiateDotNetClass;
+        _lookupDotNetMethod = exports.LookupDotNetMethod;
+        _deserializeAsDotNetObject = exports.DeserializeAsDotNetObject;
+        _invokeDotNetMethod = exports.InvokeDotNetMethod;
+        _releaseObject = exports.ReleaseObject;
 
-        var startExport = _instance.GetAction("_start") ?? throw new InvalidOperationException("Couldn't find export '_start'");
-        startExport.Invoke();
+        if (snapshot is null)
+        {
+            _shadowStack = new ShadowStack(_memory, _malloc, _free);
+            exports.Start();
+        }
+        else
+        {
+            snapshot.RestoreTo(_memory);
+            _shadowStack = new ShadowStack(_memory, _malloc, _free);
+        }
     }
 
     internal static IsolatedRuntime FromStore(Store store)
