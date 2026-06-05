@@ -1,5 +1,4 @@
-﻿using MessagePack;
-using MessagePack.Resolvers;
+using DotNetIsolator.Internal;
 
 namespace DotNetIsolator.WasmApp;
 
@@ -19,7 +18,7 @@ public static class Serialization
     {
         // TODO: Instead of using Typeless, consider making this a generic method and having the
         // C code produce the closed type based on the declared parameter types of the method
-        var result = MessagePackSerializer.Typeless.Deserialize(value);
+        var result = MessagePackCompatibility.DeserializeTypeless(value);
 
         // Console.WriteLine($"Deserialized value of type {result?.GetType().FullName} with value {result}");
         return result;
@@ -29,6 +28,6 @@ public static class Serialization
     {
         // TODO: Should we really be pinning the result value here, or is it safe to return
         // a MonoObject* to unmanaged code and then use mono_gchandle_new(..., true) from there?
-        return MessagePackSerializer.Serialize(value, ContractlessStandardResolverAllowPrivate.Options);
+        return MessagePackCompatibility.SerializeObject(value.GetType(), value);
     }
 }

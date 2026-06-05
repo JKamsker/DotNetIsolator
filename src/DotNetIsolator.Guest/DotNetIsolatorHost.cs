@@ -1,5 +1,4 @@
-﻿using DotNetIsolator.Guest;
-using MessagePack.Resolvers;
+using DotNetIsolator.Guest;
 using MessagePack;
 using System.Text;
 using DotNetIsolator.Internal;
@@ -8,17 +7,15 @@ namespace DotNetIsolator;
 
 public static class DotNetIsolatorHost
 {
-    static readonly MessagePackSerializerOptions CallFromGuestResolverOptions =
-        MessagePackSerializerOptions.Standard.WithResolver(
-            CompositeResolver.Create(
-                GeneratedResolver.Instance,
-                ContractlessStandardResolverAllowPrivate.Instance));
-
     public static byte[] InvokeRaw(string callbackName, params byte[]?[] args)
         => InvokeRaw<object>(callbackName, args);
 
     public static void Invoke(string callbackName, params object[] args)
-        => Invoke<object>(callbackName, args);
+    {
+        _ = PerformCall<object>(
+            CreateCall(callbackName, SerializeArgs(args), isRawCall: false),
+            readResult: false);
+    }
 
     public static unsafe byte[] InvokeRaw<T>(string callbackName, params byte[]?[] args)
     {
@@ -32,36 +29,43 @@ public static class DotNetIsolatorHost
 
     public static unsafe T Invoke<T>(string callbackName, params object[] args)
     {
-        var argsSerialized = args.Select(a => a is null
-            ? null
-            : MessagePackSerializer.Serialize(a.GetType(), a, ContractlessStandardResolverAllowPrivate.Options))
-            .ToArray();
-
         // Note that this overload won't work if the host is AOT compiled because it will be unable to
         // deserialize these arbitrary arg types. For that scenario, use the Memory<byte>[] overload instead.
-        return PerformCall<T>(new GuestToHostCall
-        {
-            CallbackName = callbackName,
-            Args = argsSerialized,
-            IsRawCall = false,
-        });
+        return PerformCall<T>(
+            CreateCall(callbackName, SerializeArgs(args), isRawCall: false),
+            readResult: true);
     }
 
-    private static unsafe T PerformCall<T>(GuestToHostCall callInfo)
+    private static byte[]?[] SerializeArgs(object[] args)
+        => args.Select(a => a is null
+            ? null
+            : MessagePackCompatibility.SerializeObject(a.GetType(), a))
+            .ToArray();
+
+    private static GuestToHostCall CreateCall(string callbackName, byte[]?[] args, bool isRawCall)
+        => new()
+        {
+            CallbackName = callbackName,
+            Args = args,
+            IsRawCall = isRawCall,
+        };
+
+    private static unsafe T PerformCall<T>(GuestToHostCall callInfo, bool readResult = true)
     {
-        var callInfoBytes = MessagePackSerializer.Serialize(callInfo, CallFromGuestResolverOptions);
+        var callInfoBytes = MessagePackSerializer.Serialize(callInfo, MessagePackCompatibility.GuestToHostCallOptions);
 
         fixed (void* callInfoPtr = callInfoBytes)
         {
             var success = Interop.CallHost(callInfoPtr, callInfoBytes.Length, out var resultPtr, out var resultLength);
-            var result = (int)resultPtr == 0 ? null : new Span<byte>(resultPtr, resultLength);
+            var hasResult = (int)resultPtr != 0 && (callInfo.IsRawCall || resultLength > 0);
+            var result = hasResult ? new Span<byte>(resultPtr, resultLength) : default;
             if (success)
             {
-                return (int)resultPtr == 0
+                return !readResult || !hasResult
                     ? default!
                     : callInfo.IsRawCall
                         ? (T)(object)result.ToArray()
-                        : MessagePackSerializer.Deserialize<T>(result.ToArray(), ContractlessStandardResolverAllowPrivate.Options);
+                        : MessagePackCompatibility.DeserializeObject<T>(result.ToArray())!;
             }
             else
             {

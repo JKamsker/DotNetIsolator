@@ -1,6 +1,5 @@
 ﻿using DotNetIsolator.Internal;
 using MessagePack;
-using MessagePack.Resolvers;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -10,12 +9,6 @@ namespace DotNetIsolator;
 
 public class IsolatedRuntime : IDisposable
 {
-    static readonly MessagePackSerializerOptions CallFromGuestResolverOptions =
-        MessagePackSerializerOptions.Standard.WithResolver(
-            CompositeResolver.Create(
-                GeneratedResolver.Instance,
-                ContractlessStandardResolverAllowPrivate.Instance));
-
     private readonly Store _store;
     private readonly Instance _instance;
     private readonly Memory _memory;
@@ -106,7 +99,7 @@ public class IsolatedRuntime : IDisposable
 
     public IsolatedObject CopyObject<T>(T value)
     {
-        var serializedBytes = MessagePackSerializer.Typeless.Serialize(value);
+        var serializedBytes = MessagePackCompatibility.SerializeTypeless(value);
         var serializedBytesAddress = CopyValueLengthPrefixed(serializedBytes);
         var errorMessageBuf = _shadowStack.Push<int>();
         try
@@ -148,7 +141,7 @@ public class IsolatedRuntime : IDisposable
         return resultPtr;
     }
 
-    internal int CopyValue<T>(ReadOnlySpan<T> value, bool addLengthPrefix) where T: unmanaged
+    internal int CopyValue<T>(ReadOnlySpan<T> value, bool addLengthPrefix) where T : unmanaged
     {
         var lengthPrefixSize = addLengthPrefix ? 4 : 0;
         var valueAsBytes = MemoryMarshal.AsBytes(value);
@@ -186,7 +179,7 @@ public class IsolatedRuntime : IDisposable
         {
             // All these CopyValue strings are freed inside the C code
             var monoClassName = declaringTypeName is null ? typeName : $"{declaringTypeName}/{typeName}";
-            
+
             var errorMessageParam = _shadowStack.Push<int>();
             try
             {
@@ -249,10 +242,9 @@ public class IsolatedRuntime : IDisposable
                     .GetSpan(invocation.ResultSerialized, invocation.ResultSerializedLength)
                     .ToArray();
 
-                // Note that we don't deserialize using MessagePackSerializer.Typeless because we don't want the guest code
-                // to be able to make the host instantiate arbitrary types. The host will only instantiate the types statically
-                // defined by the type graph of TRes.
-                var result = MessagePackSerializer.Deserialize<TRes>(resultBytes, ContractlessStandardResolverAllowPrivate.Options)!;
+                // The host deserializes using the expected result type instead of trusting guest-provided
+                // top-level type metadata.
+                var result = MessagePackCompatibility.DeserializeObject<TRes>(resultBytes)!;
 
                 ReleaseGCHandle(invocation.ResultSerializedGCHandle);
                 return result;
@@ -347,7 +339,7 @@ public class IsolatedRuntime : IDisposable
         {
             var invocationInfo = MessagePackSerializer.Deserialize<GuestToHostCall>(
                 _memory.GetSpan<byte>(invocationPtr, invocationLength).ToArray(),
-                CallFromGuestResolverOptions);
+                MessagePackCompatibility.GuestToHostCallOptions);
 
             if (!_registeredCallbacks.TryGetValue(invocationInfo.CallbackName, out var callback))
             {
@@ -369,10 +361,9 @@ public class IsolatedRuntime : IDisposable
                 }
                 else
                 {
-                    deserializedArgs[i] = MessagePackSerializer.Deserialize(
+                    deserializedArgs[i] = MessagePackCompatibility.DeserializeObject(
                         expectedParameterTypes[i].ParameterType,
-                        invocationInfo.Args[i],
-                        CallFromGuestResolverOptions);
+                        invocationInfo.Args[i]);
                 }
             }
 
@@ -381,10 +372,9 @@ public class IsolatedRuntime : IDisposable
                 ? null
                 : invocationInfo.IsRawCall
                     ? (byte[])result
-                    : MessagePackSerializer.Serialize(
+                    : MessagePackCompatibility.SerializeObject(
                         callback.Method.ReturnType,
-                        result,
-                        ContractlessStandardResolverAllowPrivate.Options);
+                        result);
 
             var resultPtr = resultBytes is null ? 0 : CopyValue<byte>(resultBytes, false);
             _memory.WriteInt32(resultPtrPtr, resultPtr);

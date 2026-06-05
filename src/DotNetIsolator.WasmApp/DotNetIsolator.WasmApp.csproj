@@ -15,7 +15,16 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="MessagePack" Version="2.5.103" />
+		<PackageReference Include="MessagePack" Version="3.1.6" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Include="..\DotNetIsolator.Guest\GuestToHostCall.cs" />
+		<Compile Include="..\DotNetIsolator.Guest\MessagePackCompatibility.cs" />
+		<Compile Include="..\DotNetIsolator.Guest\ObjectGraphPrimitives.cs" />
+		<Compile Include="..\DotNetIsolator.Guest\ObjectGraphSerializer.cs" />
+		<Compile Include="..\DotNetIsolator.Guest\ObjectGraphTypes.cs" />
+		<Compile Include="..\DotNetIsolator.Guest\generated\MessagePackGenerated.cs" />
 	</ItemGroup>
 
 	<ItemGroup>

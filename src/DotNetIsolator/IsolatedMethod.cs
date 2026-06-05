@@ -1,4 +1,4 @@
-﻿using MessagePack;
+using DotNetIsolator.Internal;
 
 namespace DotNetIsolator;
 
@@ -27,7 +27,7 @@ public class IsolatedMethod
         // for them, instead using ShadowStack and the raw bytes
         Span<int> argAddresses = stackalloc int[1];
         argAddresses[0] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param0));
+            MessagePackCompatibility.SerializeTypeless(param0));
 
         try
         {
@@ -43,9 +43,9 @@ public class IsolatedMethod
     {
         Span<int> argAddresses = stackalloc int[2];
         argAddresses[0] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param0));
+            MessagePackCompatibility.SerializeTypeless(param0));
         argAddresses[1] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param1));
+            MessagePackCompatibility.SerializeTypeless(param1));
 
         try
         {
@@ -62,11 +62,11 @@ public class IsolatedMethod
     {
         Span<int> argAddresses = stackalloc int[3];
         argAddresses[0] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param0));
+            MessagePackCompatibility.SerializeTypeless(param0));
         argAddresses[1] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param1));
+            MessagePackCompatibility.SerializeTypeless(param1));
         argAddresses[2] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param2));
+            MessagePackCompatibility.SerializeTypeless(param2));
 
         try
         {
@@ -84,13 +84,13 @@ public class IsolatedMethod
     {
         Span<int> argAddresses = stackalloc int[4];
         argAddresses[0] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param0));
+            MessagePackCompatibility.SerializeTypeless(param0));
         argAddresses[1] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param1));
+            MessagePackCompatibility.SerializeTypeless(param1));
         argAddresses[2] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param2));
+            MessagePackCompatibility.SerializeTypeless(param2));
         argAddresses[3] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param3));
+            MessagePackCompatibility.SerializeTypeless(param3));
 
         try
         {
@@ -109,15 +109,15 @@ public class IsolatedMethod
     {
         Span<int> argAddresses = stackalloc int[5];
         argAddresses[0] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param0));
+            MessagePackCompatibility.SerializeTypeless(param0));
         argAddresses[1] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param1));
+            MessagePackCompatibility.SerializeTypeless(param1));
         argAddresses[2] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param2));
+            MessagePackCompatibility.SerializeTypeless(param2));
         argAddresses[3] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param3));
+            MessagePackCompatibility.SerializeTypeless(param3));
         argAddresses[4] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackSerializer.Typeless.Serialize(param4));
+            MessagePackCompatibility.SerializeTypeless(param4));
 
         try
         {
