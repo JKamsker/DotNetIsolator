@@ -101,7 +101,7 @@ public class IsolatedRuntimeHost : IDisposable
         return WithAssemblyLoader(assemblyName =>
         {
             var path = Path.Combine(directoryPath, $"{assemblyName}.dll");
-            return File.Exists(path) ? File.ReadAllBytes(path) : null;
+            return AssemblyFileCache.ReadAllBytesIfExists(path);
         });
     }
 
@@ -155,7 +155,7 @@ public class IsolatedRuntimeHost : IDisposable
     private static byte[]? LoadAssemblyFromWasmBcl(string assemblyName)
     {
         var path = Path.Combine(_wasmBclDir, $"{assemblyName}.dll");
-        return File.Exists(path) ? File.ReadAllBytes(path) : null;
+        return AssemblyFileCache.ReadAllBytesIfExists(path);
     }
 
     private static WasiConfiguration CreateDefaultWasiConfiguration()

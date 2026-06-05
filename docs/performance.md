@@ -167,6 +167,10 @@ The following paths were tested and kept:
   deserialize without a process-wide cache lock, while cache misses still
   synchronize per cache file. This improves parallel host construction without
   sharing stores, instances, callbacks, linker state, or guest memory.
+* File-backed assembly byte cache: the built-in BCL loader and directory loader
+  cache assembly file bytes by path, length, and last-write timestamp. Each
+  runtime still receives a fresh copy into its own guest memory, but repeated
+  runtime starts no longer reread the same host files from disk.
 
 ### Rejected
 
@@ -295,6 +299,10 @@ Interpretation:
   serialized module. The cache is intended for repeated host construction.
 * Runtime startup on a warm host is still about `40-60 ms` because the .NET WASI
   runtime is still instantiated and started.
+* Caching host assembly file bytes reduced close A/B samples for repeated
+  warm-host runtime startup from about `60.2 ms` at `HEAD` to about
+  `42.6-44.3 ms` with the cache, using
+  `--host-iterations 10000000 --isolated-iterations 200000 --zero-arg-iterations 5000 --payload-iterations 100 --startup-iterations 9 --concurrent-hosts 8`.
 * The runtime memory snapshot moves one-time startup work into a preload step and
   cuts repeated runtime construction to about `3-4 ms`, roughly a `13x`
   improvement for that phase in this run.
