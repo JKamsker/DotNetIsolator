@@ -35,7 +35,7 @@ public class IsolatedRuntimeHost : IDisposable
 
         Engine = CreateEngine(options);
         Linker = new Linker(Engine);
-        Module = Module.FromFile(Engine, _modulePath);
+        Module = PrecompiledModuleCache.LoadOrCompile(Engine, _modulePath, options);
 
         Linker.DefineWasi();
         AddIsolatedImports();

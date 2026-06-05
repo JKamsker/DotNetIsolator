@@ -26,6 +26,36 @@ public class StartupTest
     }
 
     [Fact]
+    public void CanStartWithPrecompiledModuleCache()
+    {
+        var cacheDirectory = Path.Combine(Path.GetTempPath(), "DotNetIsolator.Test", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var options = new IsolatedRuntimeHostOptions
+            {
+                PrecompiledModuleCacheDirectory = cacheDirectory,
+            };
+
+            using (var host = new IsolatedRuntimeHost(options))
+            using (var runtime = new IsolatedRuntime(host))
+            {
+            }
+
+            Assert.Contains(Directory.EnumerateFiles(cacheDirectory), path => Path.GetExtension(path) == ".cwasm");
+
+            using var cachedHost = new IsolatedRuntimeHost(options);
+            using var cachedRuntime = new IsolatedRuntime(cachedHost);
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDirectory))
+            {
+                Directory.Delete(cacheDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void CanLoadTypesFromBclAssembliesWithoutAnyLoader()
     {
         using var host = new IsolatedRuntimeHost();

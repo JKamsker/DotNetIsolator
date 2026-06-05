@@ -2,6 +2,10 @@ namespace DotNetIsolator;
 
 public sealed class IsolatedRuntimeHostOptions
 {
+    public bool UsePrecompiledModuleCache { get; init; } = true;
+
+    public string? PrecompiledModuleCacheDirectory { get; init; }
+
     public bool UseMemoryInitCopyOnWrite { get; init; } = true;
 
     public bool UsePoolingAllocator { get; init; }

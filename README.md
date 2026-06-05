@@ -133,6 +133,18 @@ using var runtime2 = new IsolatedRuntime(host);
 
 Each runtime has a separate WebAssembly memory and separate guest .NET runtime state. Runtime creation pays the .NET WASI startup cost, so keep an `IsolatedRuntime` warm and reuse it when you are making multiple calls into the same sandbox. Create a new runtime when you need a fresh sandbox with no previous guest state.
 
+`IsolatedRuntimeHost` uses Wasmtime's serialized module support to cache the compiled `DotNetIsolator.WasmApp.wasm` module by default. This reduces repeated host construction after the cache is warm, but it is not a snapshot of an already-started .NET runtime, so runtime creation still pays the wasm instantiation and `_start` costs. You can disable or redirect the cache:
+
+```cs
+using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
+{
+    UsePrecompiledModuleCache = true, // Set to false to disable the cache.
+    PrecompiledModuleCacheDirectory = "path/to/cache",
+});
+```
+
+See [docs/performance.md](docs/performance.md) for measured overhead and benchmark instructions.
+
 For workloads that create many short-lived runtimes, you can opt into Wasmtime's pooling allocator:
 
 ```cs
