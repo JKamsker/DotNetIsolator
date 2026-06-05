@@ -123,6 +123,15 @@ public class MethodInvocationTest : IDisposable
     }
 
     [Fact]
+    public void CanReturnList()
+    {
+        var returnValue = _runtime.CreateObject<TestClass>()
+            .Invoke<List<int>>(nameof(TestClass.ListMethod));
+
+        Assert.Equal(new[] { 1, 2, 3 }, returnValue);
+    }
+
+    [Fact]
     public void CanInvokeMultipleParamsMethod()
         => Assert.Equal("[a=123][b=True][c=Hello]", _runtime.CreateObject<TestClass>()
             .Invoke<int, bool, string, string>(nameof(TestClass.SimpleParamsMethod), 123, true, "Hello"));
@@ -194,6 +203,9 @@ public class MethodInvocationTest : IDisposable
 
         public MyComplexObject ComplexMethod()
             => MyComplexObject.CreateTestValue();
+
+        public List<int> ListMethod()
+            => new() { 1, 2, 3 };
 
         public int IntParamMethod(int val)
             => val * 2;

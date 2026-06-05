@@ -199,6 +199,17 @@ internal static class ObjectGraphSerializer
 
     private static void WriteCollection(BinaryWriter writer, object value, Type elementType, int depth)
     {
+        if (value is ICollection collection)
+        {
+            writer.Write(collection.Count);
+            foreach (var item in collection)
+            {
+                WriteValue(writer, elementType, item, depth + 1);
+            }
+
+            return;
+        }
+
         var values = ((IEnumerable)value).Cast<object?>().ToArray();
         writer.Write(values.Length);
         foreach (var item in values)
@@ -210,21 +221,21 @@ internal static class ObjectGraphSerializer
     private static object ReadCollection(BinaryReader reader, Type type, Type elementType, int depth)
     {
         var count = reader.ReadInt32();
-        var values = Array.CreateInstance(elementType, count);
-        for (var i = 0; i < count; i++)
-        {
-            values.SetValue(ReadValue(reader, elementType, depth + 1), i);
-        }
-
         if (type.IsArray)
         {
+            var values = Array.CreateInstance(elementType, count);
+            for (var i = 0; i < count; i++)
+            {
+                values.SetValue(ReadValue(reader, elementType, depth + 1), i);
+            }
+
             return values;
         }
 
         var list = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(elementType))!;
-        foreach (var item in values)
+        for (var i = 0; i < count; i++)
         {
-            list.Add(item);
+            list.Add(ReadValue(reader, elementType, depth + 1));
         }
 
         return list;

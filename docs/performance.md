@@ -34,6 +34,8 @@ The sample measures:
   payload serialization and deserialization
 * an isolated warm-runtime object return call that exercises generic object
   member serialization and deserialization
+* an isolated warm-runtime `List<int>` return call that exercises generic
+  collection serialization and deserialization
 * startup medians without the module cache, with a cold module cache, and with a
   warm module cache
 * repeated runtime startup from one warm host, with and without the runtime
@@ -156,6 +158,10 @@ The following paths were tested and kept:
   array-backed `ReadOnlyMemory<byte>`, the object-graph serializer now reads
   directly from that array instead of copying it into a second array first. It
   still copies non-array-backed memory before parsing.
+* Direct collection serialization: collection payloads with a known `Count` are
+  written by direct enumeration instead of staging through `Cast().ToArray()`,
+  and deserializing non-array collections now fills the destination `List<T>`
+  directly instead of first building an array.
 
 ### Rejected
 
@@ -231,29 +237,30 @@ Representative run with
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 113.913 ms, mean 2.278 ns
-Isolated warm-runtime Increment: total 190.360 ms, mean 190.360 ns
-Isolated warm-runtime public Invoke Increment: total 302.723 ms, mean 302.723 ns
-Isolated/direct mean ratio: 84x
+Direct host Increment: total 88.814 ms, mean 1.776 ns
+Isolated warm-runtime Increment: total 174.444 ms, mean 174.444 ns
+Isolated warm-runtime public Invoke Increment: total 265.140 ms, mean 265.140 ns
+Isolated/direct mean ratio: 98x
 
 Additional warm-call overhead
-Isolated warm-runtime zero-arg int return: total 4.658 ms, mean 232.900 ns
-Isolated warm-runtime generic byte[4096] return: total 8.203 ms, mean 16.407 us
-Isolated warm-runtime generic object return: total 40.866 ms, mean 81.733 us
+Isolated warm-runtime zero-arg int return: total 4.396 ms, mean 219.820 ns
+Isolated warm-runtime generic byte[4096] return: total 6.705 ms, mean 13.410 us
+Isolated warm-runtime generic object return: total 35.358 ms, mean 70.716 us
+Isolated warm-runtime generic List<int>[1024] return: total 322.473 ms, mean 644.946 us
 
 Startup medians
-No module cache: host 367.679 ms, runtime 46.587 ms, object 499.100 us, method 159.900 us, first call 59.700 us
-Cold module cache: host 359.519 ms, runtime 42.116 ms, object 410.200 us, method 144.700 us, first call 66.100 us
-Warm module cache: host 1.647 ms, runtime 46.881 ms, object 375.100 us, method 147.300 us, first call 93.900 us
-Warm host: runtime 43.949 ms, object 448.700 us, method 191.000 us, first call 72.500 us
-Runtime memory snapshot preload: 84.005 ms
-Warm runtime memory snapshot: runtime 3.285 ms, object 451.100 us, method 123.200 us, first call 73.200 us
+No module cache: host 310.676 ms, runtime 43.013 ms, object 795.900 us, method 175.300 us, first call 61.400 us
+Cold module cache: host 360.685 ms, runtime 40.227 ms, object 825.200 us, method 177.100 us, first call 83.000 us
+Warm module cache: host 1.573 ms, runtime 45.998 ms, object 638.600 us, method 135.500 us, first call 62.100 us
+Warm host: runtime 44.544 ms, object 703.900 us, method 153.700 us, first call 63.800 us
+Runtime memory snapshot preload: 83.406 ms
+Warm runtime memory snapshot: runtime 3.583 ms, object 970.400 us, method 179.600 us, first call 83.000 us
 ```
 
 Interpretation:
 
-* A representative warm isolated scalar call is around `190 ns` on this machine,
-  versus about `2.3 ns` for the direct host call. That is roughly `84x` slower
+* A representative warm isolated scalar call is around `174 ns` on this machine,
+  versus about `1.8 ns` for the direct host call. That is roughly `98x` slower
   for this tiny method.
 * Before the scalar fast path, the same benchmark measured about `37 us` per
   isolated call and about `21,000x` direct-call overhead on this machine. The
@@ -262,14 +269,16 @@ Interpretation:
 * The zero-argument `int` return path now bypasses result serialization for
   exact `() -> int` methods. Before that fast path, nearby samples measured
   about `2.3-2.5 us`; the representative fast-path sample above is about
-  `233 ns`.
+  `220 ns`.
 * The public `IsolatedObject.Invoke` path remains slower than reusing an
   `IsolatedMethod`, but the object-local method cache reduced close A/B samples
   from about `306 ns` to about `267-277 ns` for repeated public scalar calls.
 * Avoiding the duplicate deserialization copy reduced close A/B samples for the
   4 KiB generic byte-array return from about `14.65 us` to about `13.33 us`.
-* The warm module cache cuts host construction from about `368 ms` to about
-  `1.6 ms`, roughly a `223x` improvement for that phase in this run.
+* Direct collection serialization reduced close A/B samples for a
+  `List<int>[1024]` return from about `738 us` to about `649-652 us`.
+* The warm module cache cuts host construction from about `311 ms` to about
+  `1.6 ms`, roughly a `198x` improvement for that phase in this run.
 * The first cache miss is slower than no cache because it compiles and writes the
   serialized module. The cache is intended for repeated host construction.
 * Runtime startup on a warm host is still about `40-60 ms` because the .NET WASI

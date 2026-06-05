@@ -43,6 +43,7 @@ internal static class Program
         var zeroArgResult = WarmCallBenchmarks.MeasureIsolatedZeroArgIntCalls(options, useModuleCache: true);
         var payloadResult = WarmCallBenchmarks.MeasureIsolatedPayloadCalls(options, useModuleCache: true);
         var objectPayloadResult = WarmCallBenchmarks.MeasureIsolatedObjectPayloadCalls(options, useModuleCache: true);
+        var listPayloadResult = WarmCallBenchmarks.MeasureIsolatedListPayloadCalls(options, useModuleCache: true);
         var noCacheStartup = MeasureStartup(options, useModuleCache: false, clearCacheBeforeEachSample: false);
 
         if (options.ClearCacheBetweenScenarios)
@@ -75,6 +76,7 @@ internal static class Program
         PrintResult(zeroArgResult);
         PrintResult(payloadResult);
         PrintResult(objectPayloadResult);
+        PrintResult(listPayloadResult);
 
         Console.WriteLine();
         Console.WriteLine("Startup medians");

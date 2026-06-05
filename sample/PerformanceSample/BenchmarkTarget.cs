@@ -5,6 +5,7 @@ namespace PerformanceSample;
 public sealed class BenchmarkTarget
 {
     private readonly byte[] _buffer = CreateBuffer();
+    private readonly List<int> _numbers = CreateNumbers();
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public int Increment(int value)
@@ -29,6 +30,10 @@ public sealed class BenchmarkTarget
             Checksum = 522_240,
         };
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public List<int> ReturnNumbers()
+        => _numbers;
+
     private static byte[] CreateBuffer()
     {
         var buffer = new byte[4096];
@@ -38,6 +43,17 @@ public sealed class BenchmarkTarget
         }
 
         return buffer;
+    }
+
+    private static List<int> CreateNumbers()
+    {
+        var numbers = new List<int>(1024);
+        for (var i = 0; i < numbers.Capacity; i++)
+        {
+            numbers.Add(i);
+        }
+
+        return numbers;
     }
 }
 
