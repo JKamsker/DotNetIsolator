@@ -12,7 +12,7 @@ internal static class PrecompiledModuleCache
     private const string CacheVersion = "v1";
     private const string FileExtension = ".cwasm";
     private static readonly ConcurrentDictionary<string, string> ModuleHashes = new();
-    private static readonly object CacheLock = new();
+    private static readonly ConcurrentDictionary<string, object> CacheLocks = new();
 
     public static Module LoadOrCompile(Engine engine, string modulePath, IsolatedRuntimeHostOptions options)
     {
@@ -22,10 +22,16 @@ internal static class PrecompiledModuleCache
         }
 
         var cachePath = GetCachePath(modulePath, options);
-
-        lock (CacheLock)
+        var cachedModule = TryLoadFromCache(engine, modulePath, cachePath);
+        if (cachedModule is not null)
         {
-            var cachedModule = TryLoadFromCache(engine, modulePath, cachePath);
+            return cachedModule;
+        }
+
+        var cacheLock = CacheLocks.GetOrAdd(cachePath, _ => new object());
+        lock (cacheLock)
+        {
+            cachedModule = TryLoadFromCache(engine, modulePath, cachePath);
             if (cachedModule is not null)
             {
                 return cachedModule;

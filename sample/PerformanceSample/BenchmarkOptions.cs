@@ -6,6 +6,7 @@ internal sealed record BenchmarkOptions(
     int ZeroArgIterations,
     int PayloadIterations,
     int StartupIterations,
+    int ConcurrentHosts,
     string CacheDirectory,
     bool ClearCache,
     bool ClearCacheBetweenScenarios)
@@ -15,6 +16,7 @@ internal sealed record BenchmarkOptions(
     private const int DefaultZeroArgIterations = 2_000;
     private const int DefaultPayloadIterations = 200;
     private const int DefaultStartupIterations = 5;
+    private const int DefaultConcurrentHosts = 8;
 
     public const string Usage =
         """
@@ -28,6 +30,7 @@ internal sealed record BenchmarkOptions(
           --generic-iterations <n>   Alias for --zero-arg-iterations.
           --payload-iterations <n>   Payload-return calls to measure. Default: 200.
           --startup-iterations <n>   Startup samples per scenario. Default: 5.
+          --concurrent-hosts <n>     Parallel warm-cache hosts to construct. Default: 8.
           --cache-directory <path>   Module cache directory. Default: output/module-cache.
           --keep-cache               Reuse the cache directory from previous runs.
           --help                     Show this help.
@@ -41,6 +44,7 @@ internal sealed record BenchmarkOptions(
             DefaultZeroArgIterations,
             DefaultPayloadIterations,
             DefaultStartupIterations,
+            DefaultConcurrentHosts,
             Path.Combine(AppContext.BaseDirectory, "module-cache"),
             ClearCache: true,
             ClearCacheBetweenScenarios: true);
@@ -54,6 +58,7 @@ internal sealed record BenchmarkOptions(
                 "--zero-arg-iterations" or "--generic-iterations" => options with { ZeroArgIterations = ParsePositiveInt(args, ref i) },
                 "--payload-iterations" => options with { PayloadIterations = ParsePositiveInt(args, ref i) },
                 "--startup-iterations" => options with { StartupIterations = ParsePositiveInt(args, ref i) },
+                "--concurrent-hosts" => options with { ConcurrentHosts = ParsePositiveInt(args, ref i) },
                 "--cache-directory" => options with { CacheDirectory = ParseString(args, ref i) },
                 "--keep-cache" => options with { ClearCache = false, ClearCacheBetweenScenarios = false },
                 "--help" or "-h" => throw new HelpRequestedException(),

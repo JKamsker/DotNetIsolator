@@ -40,6 +40,7 @@ The sample measures:
   warm module cache
 * repeated runtime startup from one warm host, with and without the runtime
   memory snapshot
+* parallel warm module-cache host construction
 
 ## Wizer status and replacements
 
@@ -162,6 +163,10 @@ The following paths were tested and kept:
   written by direct enumeration instead of staging through `Cast().ToArray()`,
   and deserializing non-array collections now fills the destination `List<T>`
   directly instead of first building an array.
+* Unlocked warm module-cache hits: warm precompiled-module cache hits now
+  deserialize without a process-wide cache lock, while cache misses still
+  synchronize per cache file. This improves parallel host construction without
+  sharing stores, instances, callbacks, linker state, or guest memory.
 
 ### Rejected
 
@@ -233,33 +238,36 @@ Measured on June 5, 2026:
 * Wasmtime .NET package 44.0.0
 
 Representative run with
-`--host-iterations 50000000 --isolated-iterations 1000000 --zero-arg-iterations 20000 --payload-iterations 500 --startup-iterations 3`:
+`--host-iterations 50000000 --isolated-iterations 1000000 --zero-arg-iterations 20000 --payload-iterations 500 --startup-iterations 3 --concurrent-hosts 16`:
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 88.814 ms, mean 1.776 ns
-Isolated warm-runtime Increment: total 174.444 ms, mean 174.444 ns
-Isolated warm-runtime public Invoke Increment: total 265.140 ms, mean 265.140 ns
-Isolated/direct mean ratio: 98x
+Direct host Increment: total 87.999 ms, mean 1.760 ns
+Isolated warm-runtime Increment: total 169.840 ms, mean 169.840 ns
+Isolated warm-runtime public Invoke Increment: total 252.520 ms, mean 252.520 ns
+Isolated/direct mean ratio: 97x
 
 Additional warm-call overhead
-Isolated warm-runtime zero-arg int return: total 4.396 ms, mean 219.820 ns
-Isolated warm-runtime generic byte[4096] return: total 6.705 ms, mean 13.410 us
-Isolated warm-runtime generic object return: total 35.358 ms, mean 70.716 us
-Isolated warm-runtime generic List<int>[1024] return: total 322.473 ms, mean 644.946 us
+Isolated warm-runtime zero-arg int return: total 4.347 ms, mean 217.360 ns
+Isolated warm-runtime generic byte[4096] return: total 7.268 ms, mean 14.537 us
+Isolated warm-runtime generic object return: total 34.241 ms, mean 68.481 us
+Isolated warm-runtime generic List<int>[1024] return: total 314.630 ms, mean 629.260 us
 
 Startup medians
-No module cache: host 310.676 ms, runtime 43.013 ms, object 795.900 us, method 175.300 us, first call 61.400 us
-Cold module cache: host 360.685 ms, runtime 40.227 ms, object 825.200 us, method 177.100 us, first call 83.000 us
-Warm module cache: host 1.573 ms, runtime 45.998 ms, object 638.600 us, method 135.500 us, first call 62.100 us
-Warm host: runtime 44.544 ms, object 703.900 us, method 153.700 us, first call 63.800 us
-Runtime memory snapshot preload: 83.406 ms
-Warm runtime memory snapshot: runtime 3.583 ms, object 970.400 us, method 179.600 us, first call 83.000 us
+No module cache: host 302.086 ms, runtime 35.749 ms, object 625.500 us, method 172.700 us, first call 58.200 us
+Cold module cache: host 334.794 ms, runtime 44.092 ms, object 746.300 us, method 157.800 us, first call 93.400 us
+Warm module cache: host 1.702 ms, runtime 46.484 ms, object 655.700 us, method 141.800 us, first call 63.400 us
+Warm host: runtime 44.960 ms, object 615.600 us, method 143.900 us, first call 72.300 us
+Runtime memory snapshot preload: 82.182 ms
+Warm runtime memory snapshot: runtime 3.620 ms, object 996.200 us, method 184.600 us, first call 95.000 us
+
+Concurrent host construction
+Warm module cache parallel host construction (16 hosts): total 15.516 ms, mean 969.731 us
 ```
 
 Interpretation:
 
-* A representative warm isolated scalar call is around `174 ns` on this machine,
+* A representative warm isolated scalar call is around `170 ns` on this machine,
   versus about `1.8 ns` for the direct host call. That is roughly `98x` slower
   for this tiny method.
 * Before the scalar fast path, the same benchmark measured about `37 us` per
@@ -276,9 +284,13 @@ Interpretation:
 * Avoiding the duplicate deserialization copy reduced close A/B samples for the
   4 KiB generic byte-array return from about `14.65 us` to about `13.33 us`.
 * Direct collection serialization reduced close A/B samples for a
-  `List<int>[1024]` return from about `738 us` to about `649-652 us`.
+  `List<int>[1024]` return from about `738 us` to about `649-652 us`; the
+  representative run above is about `629 us`.
 * The warm module cache cuts host construction from about `311 ms` to about
   `1.6 ms`, roughly a `198x` improvement for that phase in this run.
+* Unlocking warm module-cache hits reduced close A/B samples for 16 parallel
+  warm-cache host constructions from about `21.8 ms` with the global lock to
+  about `13.2 ms`; the representative optimized run above is about `15.5 ms`.
 * The first cache miss is slower than no cache because it compiles and writes the
   serialized module. The cache is intended for repeated host construction.
 * Runtime startup on a warm host is still about `40-60 ms` because the .NET WASI

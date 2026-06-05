@@ -56,6 +56,39 @@ public class StartupTest
     }
 
     [Fact]
+    public async Task CanStartWithWarmPrecompiledModuleCacheInParallel()
+    {
+        var cacheDirectory = Path.Combine(Path.GetTempPath(), "DotNetIsolator.Test", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var options = new IsolatedRuntimeHostOptions
+            {
+                PrecompiledModuleCacheDirectory = cacheDirectory,
+            };
+
+            using (var host = new IsolatedRuntimeHost(options))
+            {
+            }
+
+            var tasks = Enumerable.Range(0, 8)
+                .Select(_ => Task.Run(() =>
+                {
+                    using var host = new IsolatedRuntimeHost(options);
+                    using var runtime = new IsolatedRuntime(host);
+                }));
+
+            await Task.WhenAll(tasks);
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDirectory))
+            {
+                Directory.Delete(cacheDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void CanStartWithRuntimeMemorySnapshot()
     {
         var cacheDirectory = Path.Combine(Path.GetTempPath(), "DotNetIsolator.Test", Guid.NewGuid().ToString("N"));

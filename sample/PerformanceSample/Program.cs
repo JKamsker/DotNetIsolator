@@ -60,6 +60,7 @@ internal static class Program
 
         PrimeModuleCache(options);
         var warmCacheStartup = MeasureStartup(options, useModuleCache: true, clearCacheBeforeEachSample: false);
+        var concurrentHostStartup = ConcurrentHostBenchmarks.MeasureWarmModuleCacheHostConstruction(options);
         var warmHostStartup = MeasureWarmHostStartup(options, useRuntimeMemorySnapshot: false);
         var snapshotPreload = MeasureRuntimeMemorySnapshotPreload(options);
         var snapshotStartup = MeasureWarmHostStartup(options, useRuntimeMemorySnapshot: true);
@@ -86,6 +87,10 @@ internal static class Program
         PrintRuntimeStartup("Warm host", warmHostStartup);
         Console.WriteLine($"Runtime memory snapshot preload: {FormatDuration(snapshotPreload)}");
         PrintRuntimeStartup("Warm runtime memory snapshot", snapshotStartup);
+
+        Console.WriteLine();
+        Console.WriteLine("Concurrent host construction");
+        PrintResult(concurrentHostStartup);
 
         Console.WriteLine();
         Console.WriteLine($"Sink: {MeasurementSink.Value}");
@@ -241,6 +246,7 @@ internal static class Program
         Console.WriteLine($"Zero-arg iterations: {options.ZeroArgIterations:N0}");
         Console.WriteLine($"Payload iterations: {options.PayloadIterations:N0}");
         Console.WriteLine($"Startup iterations: {options.StartupIterations:N0}");
+        Console.WriteLine($"Concurrent hosts: {options.ConcurrentHosts:N0}");
         Console.WriteLine($"Module cache directory: {options.CacheDirectory}");
     }
 
