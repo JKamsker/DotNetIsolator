@@ -11,32 +11,24 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        dotnet-version: [ '7.0.x' ]
+        dotnet-version: [ '10.0.x' ]
     steps:
     - name: Get package version suffix
       run: echo "PACKAGE_VERSION_SUFFIX=preview.$(printf $((${{ github.run_number }}+10000)))" >> $GITHUB_ENV
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Setup .NET Core SDK ${{ matrix.dotnet-version }}
-      uses: actions/setup-dotnet@v3
+      uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ matrix.dotnet-version }}
-    - name: Install wasm-opt
+    - name: Install wasi-experimental workload
+      run: dotnet workload install wasi-experimental
+    - name: Install WASI SDK
       run: |
-        mkdir binaryen
-        cd binaryen
-        wget https://github.com/WebAssembly/binaryen/releases/download/version_112/binaryen-version_112-x86_64-linux.tar.gz
-        tar xf binaryen-*.tar.gz --strip-components 1
-        cd bin
-        echo $PWD >> $GITHUB_PATH
-        echo Added $PWD to path
-    - name: Install wizer
-      run: |
-        mkdir wizer
-        cd wizer
-        wget https://github.com/bytecodealliance/wizer/releases/download/v1.6.0/wizer-v1.6.0-x86_64-linux.tar.xz
-        tar xf wizer-*.tar.xz --strip-components 1
-        echo $PWD >> $GITHUB_PATH
-        echo Added $PWD to path
+        mkdir wasi-sdk
+        cd wasi-sdk
+        wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
+        tar xf wasi-sdk-*.tar.gz --strip-components 1
+        echo "WASI_SDK_PATH=$PWD/" >> $GITHUB_ENV
     - name: .NET restore
       run: dotnet restore
     - name: .NET test
@@ -46,7 +38,7 @@ jobs:
         dotnet pack src/DotNetIsolator -c Release --no-restore /p:VersionSuffix=${{ env.PACKAGE_VERSION_SUFFIX }}
         dotnet pack src/DotNetIsolator.Guest -c Release --no-restore /p:VersionSuffix=${{ env.PACKAGE_VERSION_SUFFIX }}
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: nuget-packages
         path: artifacts/*.nupkg

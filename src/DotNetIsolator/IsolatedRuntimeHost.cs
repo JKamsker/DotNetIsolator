@@ -6,7 +6,8 @@ public class IsolatedRuntimeHost : IDisposable
 {
     private readonly static string _modulePath;
     private readonly static string _wasmBclDir;
-    
+    private const string WasmAppArgumentZero = "DotNetIsolator.WasmApp.wasm";
+
     private WasiConfiguration? _wasiConfiguration;
     private List<AssemblyLoadCallback> _assemblyLoaders = new();
 
@@ -27,6 +28,7 @@ public class IsolatedRuntimeHost : IDisposable
 
         Linker.DefineWasi();
         AddIsolatedImports();
+        WasiPreview2Shim.DefineMissingImports(Linker, Module);
         _assemblyLoaders.Add(LoadAssemblyFromWasmBcl);
     }
 
@@ -34,7 +36,7 @@ public class IsolatedRuntimeHost : IDisposable
     internal Linker Linker { get; }
     internal Module Module { get; }
     internal WasiConfiguration WasiConfigurationOrDefault
-        => _wasiConfiguration ?? new WasiConfiguration().WithInheritedStandardOutput();
+        => _wasiConfiguration ?? CreateDefaultWasiConfiguration();
 
     public IsolatedRuntimeHost WithWasiConfiguration(WasiConfiguration configuration)
     {
@@ -90,6 +92,12 @@ public class IsolatedRuntimeHost : IDisposable
         var path = Path.Combine(_wasmBclDir, $"{assemblyName}.dll");
         return File.Exists(path) ? File.ReadAllBytes(path) : null;
     }
+
+    private static WasiConfiguration CreateDefaultWasiConfiguration()
+        => new WasiConfiguration()
+            .WithArg(WasmAppArgumentZero)
+            .WithInheritedStandardOutput()
+            .WithInheritedStandardError();
 
     private void AddIsolatedImports()
     {

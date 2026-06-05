@@ -1,7 +1,8 @@
 #include <assert.h>
 #include <stdio.h>
 #include <mono/metadata/class.h>
-#include <mono-wasi/driver.h>
+#include <mono/metadata/object.h>
+#include <wasm/driver.h>
 
 typedef struct RunnerInvocation {
 	MonoGCHandle target;
@@ -88,7 +89,7 @@ void* deserialize_param(void* length_prefixed_buffer, MonoGCHandle* value_handle
 	}
 
 	void* method_params[] = { length_prefixed_buffer + 4, length_prefixed_buffer };
-	MonoObject* result = mono_wasm_invoke_method(
+	MonoObject* result = mono_runtime_invoke(
 		deserialize_param_dotnet_method,
 		NULL,
 		method_params,
@@ -119,7 +120,7 @@ void serialize_return_value(MonoObject* value, RunnerInvocation* invocation, Mon
 	}
 
 	void* method_params[] = { value };
-	MonoObject* byte_array = mono_wasm_invoke_method(serialize_return_value_dotnet_method, NULL, method_params, exception_buf);
+	MonoObject* byte_array = mono_runtime_invoke(serialize_return_value_dotnet_method, NULL, method_params, exception_buf);
 	invocation->result_serialized = mono_array_addr_with_size((MonoArray*)byte_array, 1, 0);
 	invocation->result_serialized_length = mono_array_length((MonoArray*)byte_array);
 	invocation->result_serialized_handle = (MonoGCHandle)mono_gchandle_new(byte_array, /* pinned */ 1);
@@ -146,7 +147,7 @@ void dotnetisolator_invoke_method(RunnerInvocation* invocation) {
 		//printf("GCHandle: %p, Method: %p, Arg0: %p\n", invocation->target, invocation->method_ptr, invocation->arg0);
 		MonoObject* target = invocation->target ? mono_gchandle_get_target((uint32_t)(invocation->target)) : 0;
 
-		MonoObject* result = mono_wasm_invoke_method(invocation->method_ptr, target, method_params, &exc);
+		MonoObject* result = mono_runtime_invoke(invocation->method_ptr, target, method_params, &exc);
 
 		for (int i = 0; i < num_args; i++) {
 			if (arg_handles[i]) {

@@ -57,9 +57,8 @@ public class IsolatedRuntime : IDisposable
 
         _shadowStack = new ShadowStack(_memory, _malloc, _free);
 
-        // _start is already called in preinitialization, so we can skip it now
-        // var startExport = _instance.GetAction("_start") ?? throw new InvalidOperationException("Couldn't find export '_start'");
-        // startExport.Invoke();
+        var startExport = _instance.GetAction("_start") ?? throw new InvalidOperationException("Couldn't find export '_start'");
+        startExport.Invoke();
     }
 
     internal static IsolatedRuntime FromStore(Store store)
