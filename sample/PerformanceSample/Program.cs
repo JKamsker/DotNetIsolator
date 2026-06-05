@@ -41,6 +41,7 @@ internal static class Program
         var isolatedResult = WarmCallBenchmarks.MeasureIsolatedCalls(options, useModuleCache: true);
         var genericResult = WarmCallBenchmarks.MeasureIsolatedGenericCalls(options, useModuleCache: true);
         var payloadResult = WarmCallBenchmarks.MeasureIsolatedPayloadCalls(options, useModuleCache: true);
+        var objectPayloadResult = WarmCallBenchmarks.MeasureIsolatedObjectPayloadCalls(options, useModuleCache: true);
         var noCacheStartup = MeasureStartup(options, useModuleCache: false, clearCacheBeforeEachSample: false);
 
         if (options.ClearCacheBetweenScenarios)
@@ -71,6 +72,7 @@ internal static class Program
         Console.WriteLine("Generic serialization call overhead");
         PrintResult(genericResult);
         PrintResult(payloadResult);
+        PrintResult(objectPayloadResult);
 
         Console.WriteLine();
         Console.WriteLine("Startup medians");

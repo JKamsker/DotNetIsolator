@@ -30,6 +30,8 @@ The sample measures:
   generic serialization path
 * an isolated warm-runtime 4 KiB `byte[]` return call that exercises generic
   payload serialization and deserialization
+* an isolated warm-runtime object return call that exercises generic object
+  member serialization and deserialization
 * startup medians without the module cache, with a cold module cache, and with a
   warm module cache
 * repeated runtime startup from one warm host, with and without the runtime
@@ -197,6 +199,12 @@ rediscovered without a new runtime, SDK, or workload:
   runtime stayed about `3 ms`, and warm generic/object timings varied around the
   current 128 MiB default. Keep the 128 MiB default unless a workload-specific
   tuning option is added and benchmarked separately.
+* Cached object-member lookup dictionary during deserialization: a prototype
+  changed `ObjectGraphTypes` to cache both the ordered member list and a
+  name-to-member dictionary. A controlled A/B using the generic object-return
+  benchmark measured about `46.0 us` with the existing per-object dictionary
+  build and about `47.6 us` with the cached dictionary. The cache adds
+  complexity and memory retention without improving this workload.
 
 ## Measured Results
 
@@ -212,27 +220,28 @@ Representative run with
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 91.397 ms, mean 1.828 ns
-Isolated warm-runtime Increment: total 171.927 ms, mean 171.927 ns
-Isolated/direct mean ratio: 94x
+Direct host Increment: total 93.822 ms, mean 1.876 ns
+Isolated warm-runtime Increment: total 181.310 ms, mean 181.310 ns
+Isolated/direct mean ratio: 97x
 
 Generic serialization call overhead
-Isolated warm-runtime generic int return: total 45.175 ms, mean 2.259 us
-Isolated warm-runtime generic byte[4096] return: total 6.940 ms, mean 13.880 us
+Isolated warm-runtime generic int return: total 49.473 ms, mean 2.474 us
+Isolated warm-runtime generic byte[4096] return: total 7.019 ms, mean 14.038 us
+Isolated warm-runtime generic object return: total 42.183 ms, mean 84.366 us
 
 Startup medians
-No module cache: host 306.602 ms, runtime 37.796 ms, object 407.400 us, method 119.000 us, first call 55.100 us
-Cold module cache: host 315.681 ms, runtime 35.866 ms, object 378.700 us, method 116.700 us, first call 52.400 us
-Warm module cache: host 1.434 ms, runtime 42.318 ms, object 365.800 us, method 115.400 us, first call 55.800 us
-Warm host: runtime 38.667 ms, object 375.100 us, method 120.700 us, first call 52.700 us
-Runtime memory snapshot preload: 74.498 ms
-Warm runtime memory snapshot: runtime 3.002 ms, object 427.800 us, method 115.200 us, first call 60.500 us
+No module cache: host 310.116 ms, runtime 37.620 ms, object 438.500 us, method 133.600 us, first call 58.600 us
+Cold module cache: host 327.752 ms, runtime 41.120 ms, object 580.500 us, method 142.500 us, first call 60.300 us
+Warm module cache: host 2.157 ms, runtime 50.401 ms, object 593.700 us, method 184.100 us, first call 75.900 us
+Warm host: runtime 50.150 ms, object 518.600 us, method 168.900 us, first call 67.900 us
+Runtime memory snapshot preload: 92.367 ms
+Warm runtime memory snapshot: runtime 3.176 ms, object 493.700 us, method 145.900 us, first call 88.700 us
 ```
 
 Interpretation:
 
-* A representative warm isolated scalar call is around `173 ns` on this machine,
-  versus about `1.75 ns` for the direct host call. That is roughly `98x` slower
+* A representative warm isolated scalar call is around `181 ns` on this machine,
+  versus about `1.9 ns` for the direct host call. That is roughly `97x` slower
   for this tiny method.
 * Before the scalar fast path, the same benchmark measured about `37 us` per
   isolated call and about `21,000x` direct-call overhead on this machine. The
@@ -244,12 +253,12 @@ Interpretation:
   `2.29-2.32 us`.
 * Avoiding the duplicate deserialization copy reduced close A/B samples for the
   4 KiB generic byte-array return from about `14.65 us` to about `13.33 us`.
-* The warm module cache cuts host construction from about `302 ms` to about
-  `1.6 ms`, roughly a `190x` improvement for that phase.
+* The warm module cache cuts host construction from about `310 ms` to about
+  `2.2 ms`, roughly a `144x` improvement for that phase in this run.
 * The first cache miss is slower than no cache because it compiles and writes the
   serialized module. The cache is intended for repeated host construction.
 * Runtime startup on a warm host is still about `40-60 ms` because the .NET WASI
   runtime is still instantiated and started.
 * The runtime memory snapshot moves one-time startup work into a preload step and
-  cuts repeated runtime construction to about `3-4 ms`, roughly an `11x` or
-  better improvement for that phase on representative runs.
+  cuts repeated runtime construction to about `3-4 ms`, roughly a `16x`
+  improvement for that phase in this run.
