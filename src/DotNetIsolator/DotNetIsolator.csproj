@@ -22,6 +22,7 @@
 	<ItemGroup>
 		<Compile Include="..\DotNetIsolator.Guest\GuestToHostCall.cs" />
 		<Compile Include="..\DotNetIsolator.Guest\MessagePackCompatibility.cs" />
+		<Compile Include="..\DotNetIsolator.Guest\ObjectGraphObjectSerializer.cs" />
 		<Compile Include="..\DotNetIsolator.Guest\ObjectGraphPrimitiveCollections.cs" />
 		<Compile Include="..\DotNetIsolator.Guest\ObjectGraphPrimitives.cs" />
 		<Compile Include="..\DotNetIsolator.Guest\ObjectGraphSerializer.cs" />

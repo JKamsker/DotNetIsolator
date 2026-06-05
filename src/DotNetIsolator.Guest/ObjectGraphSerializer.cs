@@ -50,7 +50,7 @@ internal static class ObjectGraphSerializer
         return new MemoryStream(value.ToArray());
     }
 
-    private static void WriteValue(BinaryWriter writer, Type declaredType, object? value, int depth)
+    internal static void WriteValue(BinaryWriter writer, Type declaredType, object? value, int depth)
     {
         EnsureDepth(depth);
         writer.Write(value is not null);
@@ -69,7 +69,7 @@ internal static class ObjectGraphSerializer
         WriteNonNullValue(writer, type, value, depth + 1);
     }
 
-    private static object? ReadValue(BinaryReader reader, Type declaredType, int depth)
+    internal static object? ReadValue(BinaryReader reader, Type declaredType, int depth)
     {
         EnsureDepth(depth);
         if (!reader.ReadBoolean())
@@ -128,7 +128,7 @@ internal static class ObjectGraphSerializer
         }
         else
         {
-            WriteObject(writer, type, value, depth);
+            ObjectGraphObjectSerializer.Write(writer, type, value, depth);
         }
     }
 
@@ -155,7 +155,7 @@ internal static class ObjectGraphSerializer
             return ReadCollection(reader, type, elementType, depth);
         }
 
-        return ReadObject(reader, type, depth);
+        return ObjectGraphObjectSerializer.Read(reader, type, depth);
     }
 
     private static void WriteDictionary(BinaryWriter writer, object value, Type keyType, Type valueType, int depth)
@@ -251,40 +251,6 @@ internal static class ObjectGraphSerializer
 
         return list;
     }
-
-    private static void WriteObject(BinaryWriter writer, Type type, object value, int depth)
-    {
-        var members = ObjectGraphTypes.GetSerializableMembers(type);
-        writer.Write(members.Length);
-        foreach (var member in members)
-        {
-            writer.Write(member.Name);
-            ObjectGraphTypes.WriteType(writer, member.Type);
-            WriteValue(writer, member.Type, member.GetValue(value), depth + 1);
-        }
-    }
-
-    private static object ReadObject(BinaryReader reader, Type type, int depth)
-    {
-        var result = ObjectGraphTypes.CreateObject(type);
-        var members = ObjectGraphTypes.GetSerializableMembers(type).ToDictionary(m => m.Name, StringComparer.Ordinal);
-        var count = reader.ReadInt32();
-        for (var i = 0; i < count; i++)
-        {
-            var memberName = reader.ReadString();
-            var serializedType = ObjectGraphTypes.ReadType(reader);
-            var value = ReadValue(reader, serializedType, depth + 1);
-            if (members.TryGetValue(memberName, out var member) && IsAssignable(member.Type, value))
-            {
-                member.SetValue(result, value);
-            }
-        }
-
-        return result;
-    }
-
-    private static bool IsAssignable(Type type, object? value)
-        => value is null || ObjectGraphTypes.UnwrapNullable(type).IsInstanceOfType(value);
 
     private static void EnsureDepth(int depth)
     {

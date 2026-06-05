@@ -171,6 +171,10 @@ The following paths were tested and kept:
   compact count-plus-bytes format instead of writing each element through the
   recursive nullable value path. The host still receives new arrays/lists that
   are copied out of guest memory.
+* Compact object-member codec: object payloads write members positionally in the
+  cached serializer order instead of writing each member name and
+  assembly-qualified member type. Deserialization uses the expected member
+  types and still creates a fresh object graph.
 * Unlocked warm module-cache hits: warm precompiled-module cache hits now
   deserialize without a process-wide cache lock, while cache misses still
   synchronize per cache file. This improves parallel host construction without
@@ -254,33 +258,33 @@ Representative run with
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 88.336 ms, mean 1.767 ns
-Isolated warm-runtime Increment: total 167.780 ms, mean 167.780 ns
-Isolated warm-runtime public Invoke Increment: total 216.908 ms, mean 216.908 ns
-Isolated/direct mean ratio: 95x
+Direct host Increment: total 90.446 ms, mean 1.809 ns
+Isolated warm-runtime Increment: total 189.174 ms, mean 189.174 ns
+Isolated warm-runtime public Invoke Increment: total 223.235 ms, mean 223.235 ns
+Isolated/direct mean ratio: 105x
 
 Additional warm-call overhead
-Isolated warm-runtime zero-arg int return: total 3.204 ms, mean 160.190 ns
-Isolated warm-runtime generic byte[4096] return: total 0.902 ms, mean 1.804 us
-Isolated warm-runtime generic object return: total 33.788 ms, mean 67.576 us
-Isolated warm-runtime generic List<int>[1024] return: total 16.954 ms, mean 33.909 us
+Isolated warm-runtime zero-arg int return: total 3.314 ms, mean 165.715 ns
+Isolated warm-runtime generic byte[4096] return: total 0.770 ms, mean 1.540 us
+Isolated warm-runtime generic object return: total 11.910 ms, mean 23.820 us
+Isolated warm-runtime generic List<int>[1024] return: total 17.295 ms, mean 34.590 us
 
 Startup medians
-No module cache: host 297.323 ms, runtime 35.249 ms, object 555.200 us, method 97.200 us, first call 50.800 us
-Cold module cache: host 321.668 ms, runtime 39.604 ms, object 569.500 us, method 106.700 us, first call 56.000 us
-Warm module cache: host 1.726 ms, runtime 45.941 ms, object 586.000 us, method 113.600 us, first call 60.500 us
-Warm host: runtime 42.105 ms, object 623.500 us, method 102.700 us, first call 55.500 us
-Runtime memory snapshot preload: 79.647 ms
-Warm runtime memory snapshot: runtime 3.166 ms, object 594.500 us, method 96.300 us, first call 64.400 us
+No module cache: host 306.585 ms, runtime 35.151 ms, object 565.800 us, method 98.700 us, first call 52.600 us
+Cold module cache: host 336.528 ms, runtime 39.198 ms, object 566.600 us, method 97.300 us, first call 55.800 us
+Warm module cache: host 1.956 ms, runtime 45.217 ms, object 696.400 us, method 132.100 us, first call 92.500 us
+Warm host: runtime 36.998 ms, object 547.600 us, method 101.100 us, first call 53.600 us
+Runtime memory snapshot preload: 82.265 ms
+Warm runtime memory snapshot: runtime 3.096 ms, object 626.600 us, method 103.700 us, first call 61.600 us
 
 Concurrent host construction
-Warm module cache parallel host construction (16 hosts): total 17.497 ms, mean 1.094 ms
+Warm module cache parallel host construction (16 hosts): total 13.929 ms, mean 870.569 us
 ```
 
 Interpretation:
 
-* A representative warm isolated scalar call is around `168 ns` on this machine,
-  versus about `1.8 ns` for the direct host call. That is roughly `95x` slower
+* A representative warm isolated scalar call is around `189 ns` on this machine,
+  versus about `1.8 ns` for the direct host call. That is roughly `105x` slower
   for this tiny method.
 * Before the scalar fast path, the same benchmark measured about `37 us` per
   isolated call and about `21,000x` direct-call overhead on this machine. The
@@ -297,7 +301,10 @@ Interpretation:
   4 KiB generic byte-array return from about `14.65 us` to about `13.33 us`.
 * The native `() -> byte[]` fast path then reduced close A/B samples for the
   same 4 KiB byte-array return from about `13.7 us` at `HEAD` to about
-  `1.4-1.8 us`; the representative run above is about `1.8 us`.
+  `1.4-1.8 us`; the representative run above is about `1.5 us`.
+* The compact object-member codec reduced close A/B samples for the generic
+  object return from about `61.7 us` at `HEAD` to about `20.9-21.4 us`; the
+  representative run above is about `23.8 us`.
 * Direct collection serialization reduced close A/B samples for a
   `List<int>[1024]` return from about `738 us` to about `649-652 us`.
 * The bulk primitive collection codec then reduced close A/B samples for the
