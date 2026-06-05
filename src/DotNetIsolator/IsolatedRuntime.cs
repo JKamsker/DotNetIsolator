@@ -17,7 +17,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int, int, int> _instantiateDotNetClass;
     private readonly Func<int, int, int, int, int, int, int> _lookupDotNetMethod;
     private readonly Func<int, int, int> _deserializeAsDotNetObject;
-    private readonly Func<int, int, int, int, int, int> _invokeInt32Method;
+    private readonly Func<int, int, int, long> _invokeInt32MethodPacked;
     private readonly Action<int> _invokeDotNetMethod;
     private readonly Action<int> _releaseObject;
     private readonly ConcurrentDictionary<(string AssemblyName, string? Namespace, string TypeName, string MethodName, int NumArgs), IsolatedMethod> _methodLookupCache = new();
@@ -40,7 +40,7 @@ public class IsolatedRuntime : IDisposable
         _instantiateDotNetClass = exports.InstantiateDotNetClass;
         _lookupDotNetMethod = exports.LookupDotNetMethod;
         _deserializeAsDotNetObject = exports.DeserializeAsDotNetObject;
-        _invokeInt32Method = exports.InvokeInt32Method;
+        _invokeInt32MethodPacked = exports.InvokeInt32MethodPacked;
         _invokeDotNetMethod = exports.InvokeDotNetMethod;
         _releaseObject = exports.ReleaseObject;
 
@@ -212,33 +212,18 @@ public class IsolatedRuntime : IDisposable
     // Internal because you only need to call it via DotNetMethod
     internal int InvokeInt32Method(int monoMethodPtr, IsolatedObject? instance, int arg0)
     {
-        const int shadowStackSlotSize = sizeof(int);
-        const int shadowStackFrameSize = shadowStackSlotSize * 2;
+        var packedResult = unchecked((ulong)_invokeInt32MethodPacked(
+            instance is null ? 0 : instance.GuestGCHandle,
+            monoMethodPtr,
+            arg0));
 
-        var frameAddress = _shadowStack.PushFrame(shadowStackFrameSize);
-        var resultAddress = frameAddress;
-        var errorMessageAddress = frameAddress + shadowStackSlotSize;
-        try
+        var errorMessagePtr = (int)(packedResult >> 32);
+        if (errorMessagePtr != 0)
         {
-            var success = _invokeInt32Method(
-                instance is null ? 0 : instance.GuestGCHandle,
-                monoMethodPtr,
-                arg0,
-                resultAddress,
-                errorMessageAddress);
-
-            if (success == 0)
-            {
-                var errorMessagePtr = _memory.ReadInt32(errorMessageAddress);
-                throw new IsolatedException(ReadDotNetString(errorMessagePtr) ?? "The method call failed.");
-            }
-
-            return _memory.ReadInt32(resultAddress);
+            throw new IsolatedException(ReadDotNetString(errorMessagePtr) ?? "The method call failed.");
         }
-        finally
-        {
-            _shadowStack.PopFrame(frameAddress, shadowStackFrameSize);
-        }
+
+        return unchecked((int)packedResult);
     }
 
     internal TRes InvokeDotNetMethod<TRes>(int monoMethodPtr, IsolatedObject? instance, ReadOnlySpan<int> argAddresses)

@@ -94,15 +94,44 @@ This is intentionally narrow. It preserves existing behavior for complex
 arguments and return values, while proving that the boundary can be made much
 cheaper for common scalar signatures.
 
-The scalar path also reserves one two-slot shadow-stack frame per call instead
-of pushing two typed entries. This avoids repeated host-side guest-memory span
-mapping in the hottest path while preserving the same guest memory ownership and
-Wasmtime isolation boundary.
+An intermediate version reserved one two-slot shadow-stack frame per call
+instead of pushing two typed entries. The current scalar path removes that result
+frame entirely for the successful
+`int -> int` case. The WASM export returns one packed `i64`: the low 32 bits are
+the integer result, and the high 32 bits are zero on success or a guest
+`MonoString*` error pointer on failure. The host still reads guest memory for
+errors, but the normal successful path no longer maps guest memory just to read
+the result and success state.
 
-## Tried and rejected
+This does not weaken sandboxing. The method still runs inside the same Wasmtime
+instance and guest heap; the optimization only changes how a primitive result is
+transported back over an already-authorized export call.
+
+## Experiment ledger
+
+### Accepted
+
+The following paths were tested and kept:
+
+* Wasmtime module serialization: enabled by default through
+  `IsolatedRuntimeHostOptions.UsePrecompiledModuleCache`. This skips repeated
+  Wasmtime module compilation during host construction, but does not snapshot
+  initialized .NET runtime state.
+* Runtime memory snapshot: opt-in through
+  `IsolatedRuntimeHostOptions.UseRuntimeMemorySnapshot`. It copies initialized
+  per-runtime linear memory before user code runs and restores that memory into
+  later runtimes from the same host. It improves repeated runtime construction
+  while preserving per-runtime guest memory ownership.
+* Native `int -> int` invoke path: `IsolatedMethod.Invoke<int, int>` bypasses
+  MessagePack and object-graph serialization.
+* Packed scalar return: `dotnetisolator_invoke_i32_i32_packed` returns the
+  primitive result and error state in one `i64`, avoiding guest-memory
+  result-frame traffic for successful scalar calls.
+
+### Rejected
 
 The following paths were tested and rejected so they do not need to be
-rediscovered without a new runtime or workload:
+rediscovered without a new runtime, SDK, or workload:
 
 * `wasmtime wizer` / standalone Wizer: the current .NET 10 WASI module imports
   the WASI Preview 2 surface and DotNetIsolator host functions during startup.
@@ -115,11 +144,24 @@ rediscovered without a new runtime or workload:
   unmanaged thunk at method lookup and called it from the native fast path. It
   trapped inside the WASM runtime during method lookup with an out-of-bounds
   memory access, so it was rejected as unsafe for this target.
+* `mono_wasm_invoke_method`: this exists in older `wasi.sdk`
+  `mono-wasi/driver.h` headers, but it is not declared by the .NET 10
+  `Microsoft.NETCore.App.Runtime.Mono.wasi-wasm` `wasm/driver.h` used by this
+  repo. The current pack exposes `mono_wasm_marshal_get_managed_wrapper`
+  instead, but that API is documented in the runtime source as a wrapper
+  initializer for `[UnmanagedCallersOnly]` function pointers, not as an
+  arbitrary reflected `MonoMethod` invoker.
 * Lookup-time signature hoisting: a prototype exported
   `dotnetisolator_method_is_i32_i32`, cached the result in `IsolatedMethod`, and
   removed the native per-call signature check. It was slower in measurements:
   about `234 ns` versus `212 ns` after the shadow-stack frame optimization, and
   earlier about `332 ns` versus `248 ns` before that optimization.
+* Reusable scalar call frame: a prototype reserved one per-runtime two-slot
+  frame for scalar result/error transport and used an interlocked guard with a
+  normal shadow-stack fallback for reentrancy. It tested correctly, but the
+  larger benchmark still measured about `217.793 ns` per isolated call and
+  `121x` direct-call overhead. The packed scalar return replaced it because it
+  avoids that guest-memory frame on successful calls.
 * Wasmtime pooling allocator as a startup optimization: it remains available as
   `IsolatedRuntimeHostOptions.UsePoolingAllocator`, but on this workload it made
   warm runtime startup worse. Representative samples were `49.752 ms` pooled
@@ -135,32 +177,33 @@ Measured on June 5, 2026:
 * WASI SDK 25.0
 * Wasmtime .NET package 44.0.0
 
-Representative run with `--isolated-iterations 100000 --startup-iterations 5`:
+Representative run with
+`--host-iterations 50000000 --isolated-iterations 1000000 --startup-iterations 3`:
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 18.033 ms, mean 1.803 ns
-Isolated warm-runtime Increment: total 22.275 ms, mean 222.750 ns
-Isolated/direct mean ratio: 124x
+Direct host Increment: total 87.627 ms, mean 1.753 ns
+Isolated warm-runtime Increment: total 172.577 ms, mean 172.577 ns
+Isolated/direct mean ratio: 98x
 
 Startup medians
-No module cache: host 299.123 ms, runtime 37.649 ms, object 382.700 us, method 138.400 us, first call 58.100 us
-Cold module cache: host 322.702 ms, runtime 36.896 ms, object 334.200 us, method 113.700 us, first call 56.400 us
-Warm module cache: host 1.644 ms, runtime 49.715 ms, object 402.000 us, method 150.800 us, first call 73.900 us
-Warm host: runtime 55.783 ms, object 454.300 us, method 165.700 us, first call 82.000 us
-Runtime memory snapshot preload: 106.998 ms
-Warm runtime memory snapshot: runtime 18.747 ms, object 678.600 us, method 253.200 us, first call 131.300 us
+No module cache: host 300.490 ms, runtime 39.247 ms, object 340.200 us, method 119.300 us, first call 56.100 us
+Cold module cache: host 329.123 ms, runtime 37.663 ms, object 326.600 us, method 105.600 us, first call 52.800 us
+Warm module cache: host 1.633 ms, runtime 45.220 ms, object 336.000 us, method 120.100 us, first call 84.000 us
+Warm host: runtime 41.087 ms, object 288.900 us, method 119.500 us, first call 58.100 us
+Runtime memory snapshot preload: 74.771 ms
+Warm runtime memory snapshot: runtime 16.916 ms, object 632.700 us, method 120.900 us, first call 74.300 us
 ```
 
 Interpretation:
 
-* A representative warm isolated scalar call is around `223 ns` on this machine,
-  versus about `1.8 ns` for the direct host call. That is roughly `124x` slower
+* A representative warm isolated scalar call is around `173 ns` on this machine,
+  versus about `1.75 ns` for the direct host call. That is roughly `98x` slower
   for this tiny method.
 * Before the scalar fast path, the same benchmark measured about `37 us` per
   isolated call and about `21,000x` direct-call overhead on this machine. The
-  fast path and shadow-stack frame optimization cut the measured isolated call
-  cost by roughly `165x`.
+  fast path, shadow-stack frame optimization, and packed scalar return cut the
+  measured isolated call cost by roughly `214x`.
 * The warm module cache cuts host construction from about `302 ms` to about
   `1.6 ms`, roughly a `190x` improvement for that phase.
 * The first cache miss is slower than no cache because it compiles and writes the
@@ -168,5 +211,5 @@ Interpretation:
 * Runtime startup on a warm host is still about `40 ms` because the .NET WASI
   runtime is still instantiated and started.
 * The runtime memory snapshot moves one-time startup work into a preload step and
-  cuts repeated runtime construction to about `14 ms`, roughly a `3x`
+  cuts repeated runtime construction to about `17 ms`, roughly a `2.4x`
   improvement for that phase.

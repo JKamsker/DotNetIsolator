@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <mono/metadata/class.h>
 #include <mono/metadata/metadata.h>
@@ -187,8 +188,7 @@ void dotnetisolator_invoke_method(RunnerInvocation* invocation) {
 	}
 }
 
-__attribute__((export_name("dotnetisolator_invoke_i32_i32")))
-int dotnetisolator_invoke_i32_i32(MonoGCHandle target, MonoMethod* method_ptr, int arg0, int* result, MonoString** error_msg) {
+static int invoke_i32_i32(MonoGCHandle target, MonoMethod* method_ptr, int arg0, int* result, MonoString** error_msg) {
 	*error_msg = NULL;
 
 	if (!method_signature_is_i32_i32(method_ptr)) {
@@ -212,6 +212,23 @@ int dotnetisolator_invoke_i32_i32(MonoGCHandle target, MonoMethod* method_ptr, i
 
 	*result = *(int*)mono_object_unbox(result_object);
 	return 1;
+}
+
+__attribute__((export_name("dotnetisolator_invoke_i32_i32")))
+int dotnetisolator_invoke_i32_i32(MonoGCHandle target, MonoMethod* method_ptr, int arg0, int* result, MonoString** error_msg) {
+	return invoke_i32_i32(target, method_ptr, arg0, result, error_msg);
+}
+
+__attribute__((export_name("dotnetisolator_invoke_i32_i32_packed")))
+uint64_t dotnetisolator_invoke_i32_i32_packed(MonoGCHandle target, MonoMethod* method_ptr, int arg0) {
+	int result = 0;
+	MonoString* error_msg = NULL;
+	if (!invoke_i32_i32(target, method_ptr, arg0, &result, &error_msg)) {
+		uint32_t error_address = error_msg ? (uint32_t)(uintptr_t)error_msg : 1;
+		return ((uint64_t)error_address) << 32;
+	}
+
+	return (uint32_t)result;
 }
 
 __attribute__((export_name("dotnetisolator_deserialize_object")))
