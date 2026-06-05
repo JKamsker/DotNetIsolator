@@ -28,6 +28,8 @@ The sample measures:
   method lookup already created. This uses the scalar `int -> int` fast path.
 * an isolated warm-runtime zero-argument `int` return call that stays on the
   generic serialization path
+* an isolated warm-runtime 4 KiB `byte[]` return call that exercises generic
+  payload serialization and deserialization
 * startup medians without the module cache, with a cold module cache, and with a
   warm module cache
 * repeated runtime startup from one warm host, with and without the runtime
@@ -137,6 +139,10 @@ The following paths were tested and kept:
   empty guest args-buffer allocation for zero-argument calls. This preserves
   per-call guest memory isolation while reducing guest `malloc`/`free` traffic
   for non-scalar calls.
+* Array-backed object-graph deserialization streams: when deserializing from an
+  array-backed `ReadOnlyMemory<byte>`, the object-graph serializer now reads
+  directly from that array instead of copying it into a second array first. It
+  still copies non-array-backed memory before parsing.
 
 ### Rejected
 
@@ -194,24 +200,25 @@ Measured on June 5, 2026:
 * Wasmtime .NET package 44.0.0
 
 Representative run with
-`--host-iterations 50000000 --isolated-iterations 1000000 --generic-iterations 20000 --startup-iterations 3`:
+`--host-iterations 50000000 --isolated-iterations 1000000 --generic-iterations 20000 --payload-iterations 500 --startup-iterations 3`:
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 93.728 ms, mean 1.875 ns
-Isolated warm-runtime Increment: total 169.093 ms, mean 169.093 ns
-Isolated/direct mean ratio: 90x
+Direct host Increment: total 91.397 ms, mean 1.828 ns
+Isolated warm-runtime Increment: total 171.927 ms, mean 171.927 ns
+Isolated/direct mean ratio: 94x
 
 Generic serialization call overhead
-Isolated warm-runtime generic int return: total 45.795 ms, mean 2.290 us
+Isolated warm-runtime generic int return: total 45.175 ms, mean 2.259 us
+Isolated warm-runtime generic byte[4096] return: total 6.940 ms, mean 13.880 us
 
 Startup medians
-No module cache: host 290.474 ms, runtime 37.047 ms, object 329.400 us, method 119.000 us, first call 52.200 us
-Cold module cache: host 323.496 ms, runtime 36.801 ms, object 315.100 us, method 106.000 us, first call 52.400 us
-Warm module cache: host 1.404 ms, runtime 40.484 ms, object 291.200 us, method 103.900 us, first call 54.200 us
-Warm host: runtime 37.469 ms, object 328.800 us, method 120.800 us, first call 55.000 us
-Runtime memory snapshot preload: 73.589 ms
-Warm runtime memory snapshot: runtime 3.091 ms, object 372.900 us, method 110.000 us, first call 61.600 us
+No module cache: host 306.602 ms, runtime 37.796 ms, object 407.400 us, method 119.000 us, first call 55.100 us
+Cold module cache: host 315.681 ms, runtime 35.866 ms, object 378.700 us, method 116.700 us, first call 52.400 us
+Warm module cache: host 1.434 ms, runtime 42.318 ms, object 365.800 us, method 115.400 us, first call 55.800 us
+Warm host: runtime 38.667 ms, object 375.100 us, method 120.700 us, first call 52.700 us
+Runtime memory snapshot preload: 74.498 ms
+Warm runtime memory snapshot: runtime 3.002 ms, object 427.800 us, method 115.200 us, first call 60.500 us
 ```
 
 Interpretation:
@@ -227,6 +234,8 @@ Interpretation:
   fast path because it still serializes the result. Moving the invocation frame
   to the shadow stack reduced close A/B samples from about `2.44 us` to about
   `2.29-2.32 us`.
+* Avoiding the duplicate deserialization copy reduced close A/B samples for the
+  4 KiB generic byte-array return from about `14.65 us` to about `13.33 us`.
 * The warm module cache cuts host construction from about `302 ms` to about
   `1.6 ms`, roughly a `190x` improvement for that phase.
 * The first cache miss is slower than no cache because it compiles and writes the

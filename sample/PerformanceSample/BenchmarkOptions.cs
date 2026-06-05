@@ -4,6 +4,7 @@ internal sealed record BenchmarkOptions(
     int HostIterations,
     int IsolatedIterations,
     int GenericIterations,
+    int PayloadIterations,
     int StartupIterations,
     string CacheDirectory,
     bool ClearCache,
@@ -12,6 +13,7 @@ internal sealed record BenchmarkOptions(
     private const int DefaultHostIterations = 10_000_000;
     private const int DefaultIsolatedIterations = 2_000;
     private const int DefaultGenericIterations = 2_000;
+    private const int DefaultPayloadIterations = 200;
     private const int DefaultStartupIterations = 5;
 
     public const string Usage =
@@ -23,6 +25,7 @@ internal sealed record BenchmarkOptions(
           --host-iterations <n>      Direct host calls to measure. Default: 10000000.
           --isolated-iterations <n>  Isolated warm-runtime calls to measure. Default: 2000.
           --generic-iterations <n>   Generic isolated calls to measure. Default: 2000.
+          --payload-iterations <n>   Payload-return calls to measure. Default: 200.
           --startup-iterations <n>   Startup samples per scenario. Default: 5.
           --cache-directory <path>   Module cache directory. Default: output/module-cache.
           --keep-cache               Reuse the cache directory from previous runs.
@@ -35,6 +38,7 @@ internal sealed record BenchmarkOptions(
             DefaultHostIterations,
             DefaultIsolatedIterations,
             DefaultGenericIterations,
+            DefaultPayloadIterations,
             DefaultStartupIterations,
             Path.Combine(AppContext.BaseDirectory, "module-cache"),
             ClearCache: true,
@@ -47,6 +51,7 @@ internal sealed record BenchmarkOptions(
                 "--host-iterations" => options with { HostIterations = ParsePositiveInt(args, ref i) },
                 "--isolated-iterations" => options with { IsolatedIterations = ParsePositiveInt(args, ref i) },
                 "--generic-iterations" => options with { GenericIterations = ParsePositiveInt(args, ref i) },
+                "--payload-iterations" => options with { PayloadIterations = ParsePositiveInt(args, ref i) },
                 "--startup-iterations" => options with { StartupIterations = ParsePositiveInt(args, ref i) },
                 "--cache-directory" => options with { CacheDirectory = ParseString(args, ref i) },
                 "--keep-cache" => options with { ClearCache = false, ClearCacheBetweenScenarios = false },

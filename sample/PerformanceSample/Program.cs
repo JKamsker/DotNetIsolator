@@ -40,6 +40,7 @@ internal static class Program
         var hostResult = WarmCallBenchmarks.MeasureDirectHost(target, options.HostIterations);
         var isolatedResult = WarmCallBenchmarks.MeasureIsolatedCalls(options, useModuleCache: true);
         var genericResult = WarmCallBenchmarks.MeasureIsolatedGenericCalls(options, useModuleCache: true);
+        var payloadResult = WarmCallBenchmarks.MeasureIsolatedPayloadCalls(options, useModuleCache: true);
         var noCacheStartup = MeasureStartup(options, useModuleCache: false, clearCacheBeforeEachSample: false);
 
         if (options.ClearCacheBetweenScenarios)
@@ -69,6 +70,7 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine("Generic serialization call overhead");
         PrintResult(genericResult);
+        PrintResult(payloadResult);
 
         Console.WriteLine();
         Console.WriteLine("Startup medians");
@@ -231,6 +233,7 @@ internal static class Program
         Console.WriteLine($"Host iterations: {options.HostIterations:N0}");
         Console.WriteLine($"Isolated iterations: {options.IsolatedIterations:N0}");
         Console.WriteLine($"Generic iterations: {options.GenericIterations:N0}");
+        Console.WriteLine($"Payload iterations: {options.PayloadIterations:N0}");
         Console.WriteLine($"Startup iterations: {options.StartupIterations:N0}");
         Console.WriteLine($"Module cache directory: {options.CacheDirectory}");
     }

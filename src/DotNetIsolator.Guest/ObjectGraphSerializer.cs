@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace DotNetIsolator.Internal;
@@ -19,7 +20,7 @@ internal static class ObjectGraphSerializer
 
     public static object? DeserializeWithType(ReadOnlyMemory<byte> value)
     {
-        using var stream = new MemoryStream(value.ToArray());
+        using var stream = CreateReadStream(value);
         using var reader = new BinaryReader(stream, Encoding);
         return ReadTypedValue(reader, depth: 0);
     }
@@ -34,9 +35,19 @@ internal static class ObjectGraphSerializer
 
     public static object? Deserialize(Type declaredType, ReadOnlyMemory<byte> value)
     {
-        using var stream = new MemoryStream(value.ToArray());
+        using var stream = CreateReadStream(value);
         using var reader = new BinaryReader(stream, Encoding);
         return ReadValue(reader, declaredType, depth: 0);
+    }
+
+    private static MemoryStream CreateReadStream(ReadOnlyMemory<byte> value)
+    {
+        if (MemoryMarshal.TryGetArray(value, out var segment) && segment.Array is not null)
+        {
+            return new MemoryStream(segment.Array, segment.Offset, segment.Count, writable: false);
+        }
+
+        return new MemoryStream(value.ToArray());
     }
 
     private static void WriteValue(BinaryWriter writer, Type declaredType, object? value, int depth)
