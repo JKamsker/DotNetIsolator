@@ -189,6 +189,14 @@ rediscovered without a new runtime, SDK, or workload:
   improvement: the boxed baseline measured about `155 ns`, while the prototype
   measured about `157 ns` in nearby runs. The JIT already appears to make this
   path cheap enough that the extra unsafe code is not justified.
+* Smaller default WASM initial heap sizes: 64 MiB and 96 MiB prototypes both
+  passed the test suite, but neither produced a clear default performance win.
+  The 64 MiB build lowered snapshot preload samples to about `62-65 ms` versus
+  about `74 ms`, but worsened nearby generic payload and warm-runtime samples.
+  The 96 MiB build was mixed as well: preload was about `71 ms`, snapshot
+  runtime stayed about `3 ms`, and warm generic/object timings varied around the
+  current 128 MiB default. Keep the 128 MiB default unless a workload-specific
+  tuning option is added and benchmarked separately.
 
 ## Measured Results
 
