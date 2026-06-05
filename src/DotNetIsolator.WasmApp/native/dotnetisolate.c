@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <mono/metadata/appdomain.h>
 #include <mono/metadata/class.h>
 #include <mono/metadata/metadata.h>
 #include <mono/metadata/object.h>
@@ -16,6 +17,13 @@ typedef struct RunnerInvocation {
 	void** args_length_prefixed_buffers;
 	int args_length_prefixed_buffers_length;
 } RunnerInvocation;
+
+typedef struct ByteArrayInvocationResult {
+	void* data;
+	int length;
+	MonoGCHandle result_handle;
+	MonoString* error_msg;
+} ByteArrayInvocationResult;
 
 __attribute__((export_name("dotnetisolator_instantiate_class")))
 MonoGCHandle dotnetisolator_instantiate_class(char* assembly_name, char* namespace, char* class_name, char** error_msg) {
@@ -106,6 +114,22 @@ int method_signature_is_i32(MonoMethod* method) {
 
 	return mono_signature_get_param_count(signature) == 0
 		&& mono_type_get_type(return_type) == MONO_TYPE_I4;
+}
+
+int method_signature_is_byte_array(MonoMethod* method) {
+	MonoMethodSignature* signature = mono_method_signature(method);
+	if (mono_signature_get_param_count(signature) != 0) {
+		return 0;
+	}
+
+	MonoType* return_type = mono_signature_get_return_type(signature);
+	if (mono_type_get_type(return_type) != MONO_TYPE_SZARRAY) {
+		return 0;
+	}
+
+	MonoClass* array_class = mono_class_from_mono_type(return_type);
+	MonoClass* element_class = mono_class_get_element_class(array_class);
+	return element_class == mono_get_byte_class();
 }
 
 void* deserialize_param(void* length_prefixed_buffer, MonoGCHandle* value_handle, MonoObject** exception_buf) {
@@ -247,9 +271,53 @@ static int invoke_i32(MonoGCHandle target, MonoMethod* method_ptr, int* result, 
 	return 1;
 }
 
+static void invoke_byte_array(MonoGCHandle target, MonoMethod* method_ptr, ByteArrayInvocationResult* result) {
+	result->data = NULL;
+	result->length = 0;
+	result->result_handle = NULL;
+	result->error_msg = NULL;
+
+	if (!method_signature_is_byte_array(method_ptr)) {
+		fail_with_message("The method does not have the required () -> byte[] signature.", &result->error_msg);
+		return;
+	}
+
+	MonoObject* exc = NULL;
+	MonoObject* target_object = target ? mono_gchandle_get_target((uint32_t)target) : 0;
+	MonoObject* result_object = mono_runtime_invoke(method_ptr, target_object, NULL, &exc);
+
+	if (exc) {
+		MonoObject* ignored_tostring_exception;
+		result->error_msg = mono_object_to_string(exc, &ignored_tostring_exception);
+		return;
+	}
+
+	if (!result_object) {
+		return;
+	}
+
+	MonoArray* result_array = (MonoArray*)result_object;
+	uintptr_t result_length = mono_array_length(result_array);
+	if (result_length > INT32_MAX) {
+		fail_with_message("The byte array result is too large.", &result->error_msg);
+		return;
+	}
+
+	result->result_handle = (MonoGCHandle)mono_gchandle_new(result_object, /* pinned */ 1);
+	result->length = (int)result_length;
+	result->data = result->length == 0
+		? NULL
+		: mono_array_addr_with_size(result_array, 1, 0);
+}
+
 __attribute__((export_name("dotnetisolator_invoke_i32_i32")))
 int dotnetisolator_invoke_i32_i32(MonoGCHandle target, MonoMethod* method_ptr, int arg0, int* result, MonoString** error_msg) {
 	return invoke_i32_i32(target, method_ptr, arg0, result, error_msg);
+}
+
+__attribute__((export_name("dotnetisolator_invoke_byte_array")))
+void dotnetisolator_invoke_byte_array(ByteArrayInvocationResult* result, MonoGCHandle target, MonoMethod* method_ptr) {
+	invoke_byte_array(target, method_ptr, result);
 }
 
 __attribute__((export_name("dotnetisolator_invoke_i32_packed")))

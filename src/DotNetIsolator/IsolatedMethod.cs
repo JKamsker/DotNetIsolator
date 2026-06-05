@@ -24,6 +24,12 @@ public class IsolatedMethod
             return (TRes)(object)result;
         }
 
+        if (typeof(TRes) == typeof(byte[]))
+        {
+            var result = _runtimeInstance.InvokeByteArrayMethod(_monoMethodPtr, instance);
+            return (TRes)(object)result!;
+        }
+
         return _runtimeInstance.InvokeDotNetMethod<TRes>(_monoMethodPtr, instance, Span<int>.Empty);
     }
 

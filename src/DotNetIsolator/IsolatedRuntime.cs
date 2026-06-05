@@ -19,6 +19,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int> _deserializeAsDotNetObject;
     private readonly Func<int, int, long> _invokeInt32MethodNoArgsPacked;
     private readonly Func<int, int, int, long> _invokeInt32MethodPacked;
+    private readonly Action<int, int, int> _invokeByteArrayMethod;
     private readonly Action<int> _invokeDotNetMethod;
     private readonly Action<int> _releaseObject;
     private readonly ConcurrentDictionary<(string AssemblyName, string? Namespace, string? DeclaringTypeName, string TypeName, string MethodName, int NumArgs), IsolatedMethod> _methodLookupCache = new();
@@ -43,6 +44,7 @@ public class IsolatedRuntime : IDisposable
         _deserializeAsDotNetObject = exports.DeserializeAsDotNetObject;
         _invokeInt32MethodNoArgsPacked = exports.InvokeInt32MethodNoArgsPacked;
         _invokeInt32MethodPacked = exports.InvokeInt32MethodPacked;
+        _invokeByteArrayMethod = exports.InvokeByteArrayMethod;
         _invokeDotNetMethod = exports.InvokeDotNetMethod;
         _releaseObject = exports.ReleaseObject;
 
@@ -229,6 +231,52 @@ public class IsolatedRuntime : IDisposable
             arg0));
 
         return UnpackInt32MethodResult(packedResult);
+    }
+
+    internal byte[]? InvokeByteArrayMethod(int monoMethodPtr, IsolatedObject? instance)
+    {
+        var len = Marshal.SizeOf<ByteArrayInvocationResult>();
+        var wasmPtr = _shadowStack.PushFrame(len);
+        try
+        {
+            var resultStruct = _memory.GetSpan(wasmPtr, len);
+            ref var result = ref MemoryMarshal.AsRef<ByteArrayInvocationResult>(resultStruct);
+            result = default;
+
+            _invokeByteArrayMethod(
+                wasmPtr,
+                instance is null ? 0 : instance.GuestGCHandle,
+                monoMethodPtr);
+
+            if (result.ErrorMessage != 0)
+            {
+                throw new IsolatedException(ReadDotNetString(result.ErrorMessage) ?? "The method call failed.");
+            }
+
+            if (result.ResultGCHandle == 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                var bytes = new byte[result.Length];
+                if (result.Length > 0)
+                {
+                    _memory.GetSpan<byte>(result.Data, result.Length).CopyTo(bytes);
+                }
+
+                return bytes;
+            }
+            finally
+            {
+                ReleaseGCHandle(result.ResultGCHandle);
+            }
+        }
+        finally
+        {
+            _shadowStack.PopFrame(wasmPtr, len);
+        }
     }
 
     private int UnpackInt32MethodResult(ulong packedResult)
