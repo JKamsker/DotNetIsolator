@@ -8,7 +8,21 @@ public class StartupTest
     public void CanStartWithDefaultConfig()
     {
         using var host = new IsolatedRuntimeHost();
-        new IsolatedRuntime(host);
+        using var runtime = new IsolatedRuntime(host);
+    }
+
+    [Fact]
+    public void CanStartWithPoolingAllocator()
+    {
+        using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
+        {
+            UsePoolingAllocator = true,
+            PoolingInstanceCapacity = 4,
+            PoolingMemoryCapacity = 4,
+            PoolingTableCapacity = 4,
+        });
+
+        using var runtime = new IsolatedRuntime(host);
     }
 
     [Fact]

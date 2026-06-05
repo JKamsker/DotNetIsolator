@@ -82,7 +82,7 @@ First you must create an `IsolatedRuntimeHost`. These host objects can be shared
 
 The purpose of this is to:
 
- * Start up [Wasmtime](https://github.com/bytecodealliance/wasmtime-dotnet). This takes ~400ms so you only want to do it once and not every time you instantiate an `IsolatedRuntime`
+ * Start up [Wasmtime](https://github.com/bytecodealliance/wasmtime-dotnet) and compile the WebAssembly module once so the host can be reused across many `IsolatedRuntime` instances
  * Configure assembly loading
 
 **Configuring assembly loading**
@@ -131,7 +131,21 @@ using var runtime1 = new IsolatedRuntime(host);
 using var runtime2 = new IsolatedRuntime(host);
 ```
 
-Currently, each runtime takes ~8ms to instantiate.
+Each runtime has a separate WebAssembly memory and separate guest .NET runtime state. Runtime creation pays the .NET WASI startup cost, so keep an `IsolatedRuntime` warm and reuse it when you are making multiple calls into the same sandbox. Create a new runtime when you need a fresh sandbox with no previous guest state.
+
+For workloads that create many short-lived runtimes, you can opt into Wasmtime's pooling allocator:
+
+```cs
+using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
+{
+    UsePoolingAllocator = true,
+    PoolingInstanceCapacity = 32,
+    PoolingMemoryCapacity = 32,
+    PoolingTableCapacity = 32,
+});
+```
+
+Pooling can reduce host-side allocator overhead, but it is not a replacement for a preinitialized .NET runtime snapshot. It also imposes capacity and memory limits, so set the capacities to match the maximum number of concurrent runtimes you expect.
 
 ### Calling lambdas
 

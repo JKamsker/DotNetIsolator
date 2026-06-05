@@ -6,6 +6,7 @@ public class IsolatedRuntimeHost : IDisposable
 {
     private readonly static string _modulePath;
     private readonly static string _wasmBclDir;
+    private const ulong NoMemoryReservationForGrowth = 0;
     private const string WasmAppArgumentZero = "DotNetIsolator.WasmApp.wasm";
 
     private WasiConfiguration? _wasiConfiguration;
@@ -21,8 +22,18 @@ public class IsolatedRuntimeHost : IDisposable
     }
 
     public IsolatedRuntimeHost()
+        : this(new IsolatedRuntimeHostOptions())
     {
-        Engine = new Engine();
+    }
+
+    public IsolatedRuntimeHost(IsolatedRuntimeHostOptions options)
+    {
+        if (options is null)
+        {
+            throw new ArgumentNullException(nameof(options));
+        }
+
+        Engine = CreateEngine(options);
         Linker = new Linker(Engine);
         Module = Module.FromFile(Engine, _modulePath);
 
@@ -98,6 +109,63 @@ public class IsolatedRuntimeHost : IDisposable
             .WithArg(WasmAppArgumentZero)
             .WithInheritedStandardOutput()
             .WithInheritedStandardError();
+
+    private static Engine CreateEngine(IsolatedRuntimeHostOptions options)
+    {
+        if (!options.UsePoolingAllocator)
+        {
+            using var config = CreateConfig(options);
+            return new Engine(config);
+        }
+
+        ValidatePoolingOptions(options);
+
+        using var poolingAllocationConfig = new PoolingAllocationConfig()
+            .WithMaxCoreInstances(options.PoolingInstanceCapacity)
+            .WithMaxMemories(options.PoolingMemoryCapacity)
+            .WithMaxMemorySize(options.PoolingMaxMemorySize)
+            .WithMaxTables(options.PoolingTableCapacity)
+            .WithMaxTableElements(options.PoolingMaxTableElements);
+
+        using var pooledConfig = CreateConfig(options)
+            .WithMemoryMayMove(true)
+            .WithStaticMemoryMaximumSize((ulong)options.PoolingMaxMemorySize)
+            .WithMemoryReservationForGrowth(NoMemoryReservationForGrowth)
+            .WithPoolingAllocationStrategy(poolingAllocationConfig);
+
+        return new Engine(pooledConfig);
+    }
+
+    private static Config CreateConfig(IsolatedRuntimeHostOptions options)
+        => new Config().WithMemoryInitCopyOnWrite(options.UseMemoryInitCopyOnWrite);
+
+    private static void ValidatePoolingOptions(IsolatedRuntimeHostOptions options)
+    {
+        if (options.PoolingInstanceCapacity == 0)
+        {
+            throw new ArgumentException($"{nameof(options.PoolingInstanceCapacity)} must be greater than zero.", nameof(options));
+        }
+
+        if (options.PoolingMemoryCapacity == 0)
+        {
+            throw new ArgumentException($"{nameof(options.PoolingMemoryCapacity)} must be greater than zero.", nameof(options));
+        }
+
+        if (options.PoolingTableCapacity == 0)
+        {
+            throw new ArgumentException($"{nameof(options.PoolingTableCapacity)} must be greater than zero.", nameof(options));
+        }
+
+        if (options.PoolingMaxMemorySize == 0)
+        {
+            throw new ArgumentException($"{nameof(options.PoolingMaxMemorySize)} must be greater than zero.", nameof(options));
+        }
+
+        if (options.PoolingMaxTableElements == 0)
+        {
+            throw new ArgumentException($"{nameof(options.PoolingMaxTableElements)} must be greater than zero.", nameof(options));
+        }
+    }
 
     private void AddIsolatedImports()
     {
