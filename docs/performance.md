@@ -61,8 +61,11 @@ rules out using the generated `_start` function as a normal Wizer initializer.
 
 DotNetIsolator therefore has an opt-in in-memory replacement:
 `IsolatedRuntimeHostOptions.UseRuntimeMemorySnapshot`. When enabled, the host can
-instantiate the bundled module once, run `_start`, copy the initialized linear
-memory, and restore that memory into later runtimes before user code runs.
+instantiate the bundled module once, run `_start`, compare the initialized
+linear memory with a fresh pre-start instance, and store only the WebAssembly
+pages that changed during startup. Later runtimes still get their own fresh
+Wasmtime store, instance, and guest heap; the snapshot restore only copies those
+pre-user-code changed pages into the new instance before user code runs.
 
 ```csharp
 using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
@@ -78,8 +81,8 @@ using var runtime = new IsolatedRuntime(host);
 This snapshot is per-host and in-memory only. It improves latency for repeated
 runtimes from the same host, but it does not help the first runtime unless the
 snapshot is preloaded off the critical path. It is also narrower than Wizer: it
-copies linear memory, not arbitrary tables or globals. It is covered by startup
-and host-callback tests for the current generated .NET 10 module.
+copies linear memory pages, not arbitrary tables or globals. It is covered by
+startup and host-callback tests for the current generated .NET 10 module.
 
 ## Scalar fast path
 
@@ -118,10 +121,10 @@ The following paths were tested and kept:
   Wasmtime module compilation during host construction, but does not snapshot
   initialized .NET runtime state.
 * Runtime memory snapshot: opt-in through
-  `IsolatedRuntimeHostOptions.UseRuntimeMemorySnapshot`. It copies initialized
-  per-runtime linear memory before user code runs and restores that memory into
-  later runtimes from the same host. It improves repeated runtime construction
-  while preserving per-runtime guest memory ownership.
+  `IsolatedRuntimeHostOptions.UseRuntimeMemorySnapshot`. It stores changed
+  initialized linear-memory pages before user code runs and restores those pages
+  into later runtimes from the same host. It improves repeated runtime
+  construction while preserving per-runtime guest memory ownership.
 * Native `int -> int` invoke path: `IsolatedMethod.Invoke<int, int>` bypasses
   MessagePack and object-graph serialization.
 * Packed scalar return: `dotnetisolator_invoke_i32_i32_packed` returns the
@@ -167,6 +170,12 @@ rediscovered without a new runtime, SDK, or workload:
   warm runtime startup worse. Representative samples were `49.752 ms` pooled
   versus `40.169 ms` unpooled, and later `62.802 ms` pooled versus `48.011 ms`
   unpooled.
+* Removing generic boxing from the existing `int -> int` public fast-path shim:
+  a prototype replaced `(object)` casts in `IsolatedMethod.Invoke<T0, TRes>` with
+  `Unsafe.As` after exact type checks. Close A/B samples showed no meaningful
+  improvement: the boxed baseline measured about `155 ns`, while the prototype
+  measured about `157 ns` in nearby runs. The JIT already appears to make this
+  path cheap enough that the extra unsafe code is not justified.
 
 ## Measured Results
 
@@ -182,17 +191,17 @@ Representative run with
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 87.627 ms, mean 1.753 ns
-Isolated warm-runtime Increment: total 172.577 ms, mean 172.577 ns
-Isolated/direct mean ratio: 98x
+Direct host Increment: total 89.449 ms, mean 1.789 ns
+Isolated warm-runtime Increment: total 174.208 ms, mean 174.208 ns
+Isolated/direct mean ratio: 97x
 
 Startup medians
-No module cache: host 300.490 ms, runtime 39.247 ms, object 340.200 us, method 119.300 us, first call 56.100 us
-Cold module cache: host 329.123 ms, runtime 37.663 ms, object 326.600 us, method 105.600 us, first call 52.800 us
-Warm module cache: host 1.633 ms, runtime 45.220 ms, object 336.000 us, method 120.100 us, first call 84.000 us
-Warm host: runtime 41.087 ms, object 288.900 us, method 119.500 us, first call 58.100 us
-Runtime memory snapshot preload: 74.771 ms
-Warm runtime memory snapshot: runtime 16.916 ms, object 632.700 us, method 120.900 us, first call 74.300 us
+No module cache: host 308.197 ms, runtime 39.332 ms, object 346.900 us, method 131.300 us, first call 54.200 us
+Cold module cache: host 336.540 ms, runtime 37.095 ms, object 343.600 us, method 113.600 us, first call 52.200 us
+Warm module cache: host 1.533 ms, runtime 46.737 ms, object 331.300 us, method 128.200 us, first call 58.500 us
+Warm host: runtime 57.886 ms, object 592.300 us, method 254.400 us, first call 110.800 us
+Runtime memory snapshot preload: 92.141 ms
+Warm runtime memory snapshot: runtime 3.575 ms, object 453.900 us, method 154.900 us, first call 87.800 us
 ```
 
 Interpretation:
@@ -208,8 +217,8 @@ Interpretation:
   `1.6 ms`, roughly a `190x` improvement for that phase.
 * The first cache miss is slower than no cache because it compiles and writes the
   serialized module. The cache is intended for repeated host construction.
-* Runtime startup on a warm host is still about `40 ms` because the .NET WASI
+* Runtime startup on a warm host is still about `40-60 ms` because the .NET WASI
   runtime is still instantiated and started.
 * The runtime memory snapshot moves one-time startup work into a preload step and
-  cuts repeated runtime construction to about `17 ms`, roughly a `2.4x`
-  improvement for that phase.
+  cuts repeated runtime construction to about `3-4 ms`, roughly an `11x` or
+  better improvement for that phase on representative runs.
