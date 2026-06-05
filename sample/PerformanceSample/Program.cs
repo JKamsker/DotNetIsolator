@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using DotNetIsolator;
 
@@ -8,8 +7,6 @@ namespace PerformanceSample;
 
 internal static class Program
 {
-    private static long _sink;
-
     public static int Main(string[] args)
     {
         CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
@@ -40,8 +37,9 @@ internal static class Program
         PrintEnvironment(options);
 
         var target = new BenchmarkTarget();
-        var hostResult = MeasureDirectHost(target, options.HostIterations);
-        var isolatedResult = MeasureIsolatedCalls(options, useModuleCache: true);
+        var hostResult = WarmCallBenchmarks.MeasureDirectHost(target, options.HostIterations);
+        var isolatedResult = WarmCallBenchmarks.MeasureIsolatedCalls(options, useModuleCache: true);
+        var genericResult = WarmCallBenchmarks.MeasureIsolatedGenericCalls(options, useModuleCache: true);
         var noCacheStartup = MeasureStartup(options, useModuleCache: false, clearCacheBeforeEachSample: false);
 
         if (options.ClearCacheBetweenScenarios)
@@ -69,6 +67,10 @@ internal static class Program
         Console.WriteLine($"Isolated/direct mean ratio: {isolatedResult.MeanNanoseconds / hostResult.MeanNanoseconds:N0}x");
 
         Console.WriteLine();
+        Console.WriteLine("Generic serialization call overhead");
+        PrintResult(genericResult);
+
+        Console.WriteLine();
         Console.WriteLine("Startup medians");
         PrintStartup("No module cache", noCacheStartup);
         PrintStartup("Cold module cache", coldCacheStartup);
@@ -78,54 +80,8 @@ internal static class Program
         PrintRuntimeStartup("Warm runtime memory snapshot", snapshotStartup);
 
         Console.WriteLine();
-        Console.WriteLine($"Sink: {_sink}");
+        Console.WriteLine($"Sink: {MeasurementSink.Value}");
         return 0;
-    }
-
-    private static Measurement MeasureDirectHost(BenchmarkTarget target, int iterations)
-    {
-        long sum = 0;
-        for (var i = 0; i < 1_000; i++)
-        {
-            sum += target.Increment(i);
-        }
-
-        var elapsed = Time(() =>
-        {
-            for (var i = 0; i < iterations; i++)
-            {
-                sum += target.Increment(i);
-            }
-        });
-
-        Consume(sum);
-        return new Measurement("Direct host Increment", iterations, elapsed);
-    }
-
-    private static Measurement MeasureIsolatedCalls(BenchmarkOptions options, bool useModuleCache)
-    {
-        using var host = CreateHost(options, useModuleCache);
-        using var runtime = new IsolatedRuntime(host);
-        var target = runtime.CreateObject<BenchmarkTarget>();
-        var method = target.FindMethod(nameof(BenchmarkTarget.Increment), 1);
-
-        long sum = 0;
-        for (var i = 0; i < 10; i++)
-        {
-            sum += method.Invoke<int, int>(target, i);
-        }
-
-        var elapsed = Time(() =>
-        {
-            for (var i = 0; i < options.IsolatedIterations; i++)
-            {
-                sum += method.Invoke<int, int>(target, i);
-            }
-        });
-
-        target.ReleaseGCHandle();
-        Consume(sum);
-        return new Measurement("Isolated warm-runtime Increment", options.IsolatedIterations, elapsed);
     }
 
     private static StartupMeasurement MeasureStartup(
@@ -163,7 +119,7 @@ internal static class Program
             methodTimes.Add(stopwatch.Elapsed);
 
             stopwatch.Restart();
-            Consume(method.Invoke<int, int>(target, i));
+            MeasurementSink.Consume(method.Invoke<int, int>(target, i));
             firstCallTimes.Add(stopwatch.Elapsed);
 
             target.ReleaseGCHandle();
@@ -230,7 +186,7 @@ internal static class Program
         methodTimes.Add(stopwatch.Elapsed);
 
         stopwatch.Restart();
-        Consume(method.Invoke<int, int>(target, sample));
+        MeasurementSink.Consume(method.Invoke<int, int>(target, sample));
         firstCallTimes.Add(stopwatch.Elapsed);
 
         target.ReleaseGCHandle();
@@ -274,6 +230,7 @@ internal static class Program
         Console.WriteLine($"Process architecture: {RuntimeInformation.ProcessArchitecture}");
         Console.WriteLine($"Host iterations: {options.HostIterations:N0}");
         Console.WriteLine($"Isolated iterations: {options.IsolatedIterations:N0}");
+        Console.WriteLine($"Generic iterations: {options.GenericIterations:N0}");
         Console.WriteLine($"Startup iterations: {options.StartupIterations:N0}");
         Console.WriteLine($"Module cache directory: {options.CacheDirectory}");
     }
@@ -335,14 +292,4 @@ internal static class Program
         }
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void Consume(long value)
-        => _sink = value;
-}
-
-public sealed class BenchmarkTarget
-{
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public int Increment(int value)
-        => unchecked((value * 31) + 7);
 }

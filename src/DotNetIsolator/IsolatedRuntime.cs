@@ -230,7 +230,7 @@ public class IsolatedRuntime : IDisposable
     {
         // Prepare an Invocation struct within guest memory
         var len = Marshal.SizeOf<Invocation>();
-        var wasmPtr = _malloc(len); // Freed below
+        var wasmPtr = _shadowStack.PushFrame(len);
         try
         {
             var invocationStruct = _memory.GetSpan(wasmPtr, len);
@@ -239,7 +239,9 @@ public class IsolatedRuntime : IDisposable
             {
                 TargetGCHandle = instance is IsolatedObject o ? o.GuestGCHandle : 0,
                 MethodPtr = monoMethodPtr,
-                ArgsLengthPrefixedBuffers = CopyValue(argAddresses, addLengthPrefix: false), // Freed in C code
+                ArgsLengthPrefixedBuffers = argAddresses.Length == 0
+                    ? 0
+                    : CopyValue(argAddresses, addLengthPrefix: false), // Freed in C code
                 ArgsLengthPrefixedBuffersLength = argAddresses.Length,
             };
 
@@ -270,7 +272,7 @@ public class IsolatedRuntime : IDisposable
         }
         finally
         {
-            _free(wasmPtr);
+            _shadowStack.PopFrame(wasmPtr, len);
         }
     }
 

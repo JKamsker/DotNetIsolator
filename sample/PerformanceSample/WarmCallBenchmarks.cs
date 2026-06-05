@@ -1,0 +1,93 @@
+using System.Diagnostics;
+using DotNetIsolator;
+
+namespace PerformanceSample;
+
+internal static class WarmCallBenchmarks
+{
+    public static Measurement MeasureDirectHost(BenchmarkTarget target, int iterations)
+    {
+        long sum = 0;
+        for (var i = 0; i < 1_000; i++)
+        {
+            sum += target.Increment(i);
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < iterations; i++)
+            {
+                sum += target.Increment(i);
+            }
+        });
+
+        MeasurementSink.Consume(sum);
+        return new Measurement("Direct host Increment", iterations, elapsed);
+    }
+
+    public static Measurement MeasureIsolatedCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.Increment), 1);
+
+        long sum = 0;
+        for (var i = 0; i < 10; i++)
+        {
+            sum += method.Invoke<int, int>(target, i);
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.IsolatedIterations; i++)
+            {
+                sum += method.Invoke<int, int>(target, i);
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume(sum);
+        return new Measurement("Isolated warm-runtime Increment", options.IsolatedIterations, elapsed);
+    }
+
+    public static Measurement MeasureIsolatedGenericCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.ReturnFixedValue), 0);
+
+        long sum = 0;
+        for (var i = 0; i < 10; i++)
+        {
+            sum += method.Invoke<int>(target);
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.GenericIterations; i++)
+            {
+                sum += method.Invoke<int>(target);
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume(sum);
+        return new Measurement("Isolated warm-runtime generic int return", options.GenericIterations, elapsed);
+    }
+
+    private static IsolatedRuntimeHost CreateHost(BenchmarkOptions options, bool useModuleCache)
+        => new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
+        {
+            UsePrecompiledModuleCache = useModuleCache,
+            PrecompiledModuleCacheDirectory = options.CacheDirectory,
+        }).WithBinDirectoryAssemblyLoader();
+
+    private static TimeSpan Time(Action action)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        action();
+        return stopwatch.Elapsed;
+    }
+}

@@ -26,6 +26,8 @@ The sample measures:
 * a direct host call to `BenchmarkTarget.Increment`
 * an isolated warm-runtime call to the same method, with the isolated object and
   method lookup already created. This uses the scalar `int -> int` fast path.
+* an isolated warm-runtime zero-argument `int` return call that stays on the
+  generic serialization path
 * startup medians without the module cache, with a cold module cache, and with a
   warm module cache
 * repeated runtime startup from one warm host, with and without the runtime
@@ -130,6 +132,11 @@ The following paths were tested and kept:
 * Packed scalar return: `dotnetisolator_invoke_i32_i32_packed` returns the
   primitive result and error state in one `i64`, avoiding guest-memory
   result-frame traffic for successful scalar calls.
+* Shadow-stack generic invocation frame: the generic invocation path now places
+  its transient `Invocation` struct on the per-runtime shadow stack and skips the
+  empty guest args-buffer allocation for zero-argument calls. This preserves
+  per-call guest memory isolation while reducing guest `malloc`/`free` traffic
+  for non-scalar calls.
 
 ### Rejected
 
@@ -187,21 +194,24 @@ Measured on June 5, 2026:
 * Wasmtime .NET package 44.0.0
 
 Representative run with
-`--host-iterations 50000000 --isolated-iterations 1000000 --startup-iterations 3`:
+`--host-iterations 50000000 --isolated-iterations 1000000 --generic-iterations 20000 --startup-iterations 3`:
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 89.449 ms, mean 1.789 ns
-Isolated warm-runtime Increment: total 174.208 ms, mean 174.208 ns
-Isolated/direct mean ratio: 97x
+Direct host Increment: total 93.728 ms, mean 1.875 ns
+Isolated warm-runtime Increment: total 169.093 ms, mean 169.093 ns
+Isolated/direct mean ratio: 90x
+
+Generic serialization call overhead
+Isolated warm-runtime generic int return: total 45.795 ms, mean 2.290 us
 
 Startup medians
-No module cache: host 308.197 ms, runtime 39.332 ms, object 346.900 us, method 131.300 us, first call 54.200 us
-Cold module cache: host 336.540 ms, runtime 37.095 ms, object 343.600 us, method 113.600 us, first call 52.200 us
-Warm module cache: host 1.533 ms, runtime 46.737 ms, object 331.300 us, method 128.200 us, first call 58.500 us
-Warm host: runtime 57.886 ms, object 592.300 us, method 254.400 us, first call 110.800 us
-Runtime memory snapshot preload: 92.141 ms
-Warm runtime memory snapshot: runtime 3.575 ms, object 453.900 us, method 154.900 us, first call 87.800 us
+No module cache: host 290.474 ms, runtime 37.047 ms, object 329.400 us, method 119.000 us, first call 52.200 us
+Cold module cache: host 323.496 ms, runtime 36.801 ms, object 315.100 us, method 106.000 us, first call 52.400 us
+Warm module cache: host 1.404 ms, runtime 40.484 ms, object 291.200 us, method 103.900 us, first call 54.200 us
+Warm host: runtime 37.469 ms, object 328.800 us, method 120.800 us, first call 55.000 us
+Runtime memory snapshot preload: 73.589 ms
+Warm runtime memory snapshot: runtime 3.091 ms, object 372.900 us, method 110.000 us, first call 61.600 us
 ```
 
 Interpretation:
@@ -213,6 +223,10 @@ Interpretation:
   isolated call and about `21,000x` direct-call overhead on this machine. The
   fast path, shadow-stack frame optimization, and packed scalar return cut the
   measured isolated call cost by roughly `214x`.
+* The generic zero-argument `int` return path remains much slower than the scalar
+  fast path because it still serializes the result. Moving the invocation frame
+  to the shadow stack reduced close A/B samples from about `2.44 us` to about
+  `2.29-2.32 us`.
 * The warm module cache cuts host construction from about `302 ms` to about
   `1.6 ms`, roughly a `190x` improvement for that phase.
 * The first cache miss is slower than no cache because it compiles and writes the
