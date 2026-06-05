@@ -212,28 +212,32 @@ public class IsolatedRuntime : IDisposable
     // Internal because you only need to call it via DotNetMethod
     internal int InvokeInt32Method(int monoMethodPtr, IsolatedObject? instance, int arg0)
     {
-        var result = _shadowStack.Push<int>();
-        var errorMessage = _shadowStack.Push<int>();
+        const int shadowStackSlotSize = sizeof(int);
+        const int shadowStackFrameSize = shadowStackSlotSize * 2;
+
+        var frameAddress = _shadowStack.PushFrame(shadowStackFrameSize);
+        var resultAddress = frameAddress;
+        var errorMessageAddress = frameAddress + shadowStackSlotSize;
         try
         {
             var success = _invokeInt32Method(
                 instance is null ? 0 : instance.GuestGCHandle,
                 monoMethodPtr,
                 arg0,
-                result.Address,
-                errorMessage.Address);
+                resultAddress,
+                errorMessageAddress);
 
             if (success == 0)
             {
-                throw new IsolatedException(ReadDotNetString(errorMessage.Value) ?? "The method call failed.");
+                var errorMessagePtr = _memory.ReadInt32(errorMessageAddress);
+                throw new IsolatedException(ReadDotNetString(errorMessagePtr) ?? "The method call failed.");
             }
 
-            return result.Value;
+            return _memory.ReadInt32(resultAddress);
         }
         finally
         {
-            errorMessage.Pop();
-            result.Pop();
+            _shadowStack.PopFrame(frameAddress, shadowStackFrameSize);
         }
     }
 

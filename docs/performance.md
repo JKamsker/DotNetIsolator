@@ -94,6 +94,38 @@ This is intentionally narrow. It preserves existing behavior for complex
 arguments and return values, while proving that the boundary can be made much
 cheaper for common scalar signatures.
 
+The scalar path also reserves one two-slot shadow-stack frame per call instead
+of pushing two typed entries. This avoids repeated host-side guest-memory span
+mapping in the hottest path while preserving the same guest memory ownership and
+Wasmtime isolation boundary.
+
+## Tried and rejected
+
+The following paths were tested and rejected so they do not need to be
+rediscovered without a new runtime or workload:
+
+* `wasmtime wizer` / standalone Wizer: the current .NET 10 WASI module imports
+  the WASI Preview 2 surface and DotNetIsolator host functions during startup.
+  The Wizer initializer also cannot call imports, so generated `_start` is not a
+  valid initializer for this module shape.
+* Dirty runtime pooling: not implemented because it would reuse a guest heap,
+  GC handles, loaded assemblies, and static state after user code. That would
+  trade away sandbox isolation safety for speed.
+* `mono_method_get_unmanaged_thunk` for `int -> int`: a prototype cached the
+  unmanaged thunk at method lookup and called it from the native fast path. It
+  trapped inside the WASM runtime during method lookup with an out-of-bounds
+  memory access, so it was rejected as unsafe for this target.
+* Lookup-time signature hoisting: a prototype exported
+  `dotnetisolator_method_is_i32_i32`, cached the result in `IsolatedMethod`, and
+  removed the native per-call signature check. It was slower in measurements:
+  about `234 ns` versus `212 ns` after the shadow-stack frame optimization, and
+  earlier about `332 ns` versus `248 ns` before that optimization.
+* Wasmtime pooling allocator as a startup optimization: it remains available as
+  `IsolatedRuntimeHostOptions.UsePoolingAllocator`, but on this workload it made
+  warm runtime startup worse. Representative samples were `49.752 ms` pooled
+  versus `40.169 ms` unpooled, and later `62.802 ms` pooled versus `48.011 ms`
+  unpooled.
+
 ## Measured Results
 
 Measured on June 5, 2026:
@@ -107,27 +139,28 @@ Representative run with `--isolated-iterations 100000 --startup-iterations 5`:
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 17.745 ms, mean 1.775 ns
-Isolated warm-runtime Increment: total 24.771 ms, mean 247.714 ns
-Isolated/direct mean ratio: 140x
+Direct host Increment: total 18.033 ms, mean 1.803 ns
+Isolated warm-runtime Increment: total 22.275 ms, mean 222.750 ns
+Isolated/direct mean ratio: 124x
 
 Startup medians
-No module cache: host 301.500 ms, runtime 36.902 ms, object 347.600 us, method 115.300 us, first call 53.200 us
-Cold module cache: host 327.497 ms, runtime 42.183 ms, object 429.100 us, method 179.800 us, first call 90.500 us
-Warm module cache: host 1.581 ms, runtime 45.727 ms, object 319.800 us, method 131.700 us, first call 68.900 us
-Warm host: runtime 39.762 ms, object 424.800 us, method 155.000 us, first call 61.500 us
-Runtime memory snapshot preload: 84.893 ms
-Warm runtime memory snapshot: runtime 14.105 ms, object 387.900 us, method 109.500 us, first call 64.200 us
+No module cache: host 299.123 ms, runtime 37.649 ms, object 382.700 us, method 138.400 us, first call 58.100 us
+Cold module cache: host 322.702 ms, runtime 36.896 ms, object 334.200 us, method 113.700 us, first call 56.400 us
+Warm module cache: host 1.644 ms, runtime 49.715 ms, object 402.000 us, method 150.800 us, first call 73.900 us
+Warm host: runtime 55.783 ms, object 454.300 us, method 165.700 us, first call 82.000 us
+Runtime memory snapshot preload: 106.998 ms
+Warm runtime memory snapshot: runtime 18.747 ms, object 678.600 us, method 253.200 us, first call 131.300 us
 ```
 
 Interpretation:
 
-* A best-case warm isolated scalar call is around `248 ns` on this machine,
-  versus about `1.8 ns` for the direct host call. That is roughly `140x` slower
+* A representative warm isolated scalar call is around `223 ns` on this machine,
+  versus about `1.8 ns` for the direct host call. That is roughly `124x` slower
   for this tiny method.
 * Before the scalar fast path, the same benchmark measured about `37 us` per
   isolated call and about `21,000x` direct-call overhead on this machine. The
-  fast path cuts the measured isolated call cost by roughly `150x`.
+  fast path and shadow-stack frame optimization cut the measured isolated call
+  cost by roughly `165x`.
 * The warm module cache cuts host construction from about `302 ms` to about
   `1.6 ms`, roughly a `190x` improvement for that phase.
 * The first cache miss is slower than no cache because it compiles and writes the

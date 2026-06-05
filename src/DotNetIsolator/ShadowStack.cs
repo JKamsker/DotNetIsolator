@@ -27,7 +27,7 @@ internal class ShadowStack : IDisposable
         _stackPtr = _stackBasePtr;
     }
 
-    public ShadowStackEntry<T> Push<T>() where T: unmanaged
+    public ShadowStackEntry<T> Push<T>() where T : unmanaged
     {
         var ptr = _stackPtr;
 
@@ -38,6 +38,13 @@ internal class ShadowStack : IDisposable
         ref var value = ref MemoryMarshal.AsRef<T>(valueBytes);
 
         return new ShadowStackEntry<T>(this, ref value, ptr);
+    }
+
+    public int PushFrame(int byteLength)
+    {
+        var ptr = _stackPtr;
+        _stackPtr += byteLength;
+        return ptr;
     }
 
     public void Pop<T>(int expectedAddress) where T : unmanaged
@@ -51,6 +58,19 @@ internal class ShadowStack : IDisposable
         }
 
         var resultBytes = _memory.GetSpan(_stackPtr, len);
+        resultBytes.Clear();
+    }
+
+    public void PopFrame(int expectedAddress, int byteLength)
+    {
+        _stackPtr -= byteLength;
+
+        if (_stackPtr != expectedAddress)
+        {
+            throw new InvalidOperationException("Mismatching push/pop");
+        }
+
+        var resultBytes = _memory.GetSpan(_stackPtr, byteLength);
         resultBytes.Clear();
     }
 

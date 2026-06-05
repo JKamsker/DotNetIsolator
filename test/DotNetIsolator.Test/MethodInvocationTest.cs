@@ -32,6 +32,14 @@ public class MethodInvocationTest : IDisposable
             .Invoke<int, int>(nameof(TestClass.IntParamMethod), 123));
 
     [Fact]
+    public void CanInvokeStaticIntParamMethod()
+    {
+        var method = _runtime.GetMethod(typeof(TestClass), nameof(TestClass.StaticIntParamMethod), 1);
+
+        Assert.Equal(128, method.Invoke<int, int>(null, 123));
+    }
+
+    [Fact]
     public void IntParamMethodExceptionsSurfaceInHost()
     {
         var obj = _runtime.CreateObject<TestClass>();
@@ -144,6 +152,9 @@ public class MethodInvocationTest : IDisposable
 
         public int IntParamMethod(int val)
             => val * 2;
+
+        public static int StaticIntParamMethod(int val)
+            => val + 5;
 
         public bool BoolParamMethod(bool val)
             => val;
