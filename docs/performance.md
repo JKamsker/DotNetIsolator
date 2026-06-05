@@ -175,6 +175,10 @@ The following paths were tested and kept:
   cached serializer order instead of writing each member name and
   assembly-qualified member type. Deserialization uses the expected member
   types and still creates a fresh object graph.
+* Cached serializer type-shape metadata: dictionary and collection shape checks
+  now cache positive and negative results per `Type`. This avoids repeated
+  generic-interface scans on recursive object-graph reads and writes without
+  caching object instances or weakening the copy boundary.
 * Unlocked warm module-cache hits: warm precompiled-module cache hits now
   deserialize without a process-wide cache lock, while cache misses still
   synchronize per cache file. This improves parallel host construction without
@@ -310,6 +314,10 @@ Interpretation:
 * The bulk primitive collection codec then reduced close A/B samples for the
   same `List<int>[1024]` return from about `653.8 us` at `HEAD` to about
   `28.8-29.2 us`; the representative run above is about `34.3 us`.
+* Caching serializer type-shape metadata then reduced a clean A/B sample for the
+  same `List<int>[1024]` return from about `20.3 us` at `HEAD` to about
+  `8.1 us`, and the generic object return from about `11.0 us` to about
+  `8.9 us`, using a payload-heavy close comparison.
 * The warm module cache cuts host construction from about `311 ms` to about
   `1.6 ms`, roughly a `198x` improvement for that phase in this run.
 * Unlocking warm module-cache hits reduced close A/B samples for 16 parallel

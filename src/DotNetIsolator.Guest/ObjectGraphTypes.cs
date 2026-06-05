@@ -10,6 +10,8 @@ namespace DotNetIsolator.Internal;
 internal static class ObjectGraphTypes
 {
     private static readonly ConcurrentDictionary<Type, SerializableMember[]> MemberCache = new();
+    private static readonly ConcurrentDictionary<Type, DictionaryShape> DictionaryShapeCache = new();
+    private static readonly ConcurrentDictionary<Type, CollectionShape> CollectionShapeCache = new();
 
     public static SerializableMember[] GetSerializableMembers(Type type)
         => MemberCache.GetOrAdd(type, CreateSerializableMembers);
@@ -28,38 +30,29 @@ internal static class ObjectGraphTypes
 
     public static bool TryGetDictionaryTypes(Type type, out Type keyType, out Type valueType)
     {
-        var dictionaryType = FindGenericInterface(type, typeof(IDictionary<,>))
-            ?? FindGenericInterface(type, typeof(IReadOnlyDictionary<,>));
-
-        if (dictionaryType is null)
+        var shape = DictionaryShapeCache.GetOrAdd(type, CreateDictionaryShape);
+        if (!shape.IsDictionary)
         {
             keyType = typeof(object);
             valueType = typeof(object);
             return false;
         }
 
-        var arguments = dictionaryType.GetGenericArguments();
-        keyType = arguments[0];
-        valueType = arguments[1];
+        keyType = shape.KeyType;
+        valueType = shape.ValueType;
         return true;
     }
 
     public static bool TryGetCollectionElementType(Type type, out Type elementType)
     {
-        if (type.IsArray)
-        {
-            elementType = type.GetElementType()!;
-            return true;
-        }
-
-        var enumerableType = FindGenericInterface(type, typeof(IEnumerable<>));
-        if (enumerableType is null || type == typeof(string))
+        var shape = CollectionShapeCache.GetOrAdd(type, CreateCollectionShape);
+        if (!shape.IsCollection)
         {
             elementType = typeof(object);
             return false;
         }
 
-        elementType = enumerableType.GetGenericArguments()[0];
+        elementType = shape.ElementType;
         return true;
     }
 
@@ -76,6 +69,36 @@ internal static class ObjectGraphTypes
 
         return type.GetInterfaces()
             .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == genericTypeDefinition);
+    }
+
+    private static DictionaryShape CreateDictionaryShape(Type type)
+    {
+        var dictionaryType = FindGenericInterface(type, typeof(IDictionary<,>))
+            ?? FindGenericInterface(type, typeof(IReadOnlyDictionary<,>));
+
+        if (dictionaryType is null)
+        {
+            return DictionaryShape.NotDictionary;
+        }
+
+        var arguments = dictionaryType.GetGenericArguments();
+        return new DictionaryShape(true, arguments[0], arguments[1]);
+    }
+
+    private static CollectionShape CreateCollectionShape(Type type)
+    {
+        if (type.IsArray)
+        {
+            return new CollectionShape(true, type.GetElementType()!);
+        }
+
+        var enumerableType = FindGenericInterface(type, typeof(IEnumerable<>));
+        if (enumerableType is null || type == typeof(string))
+        {
+            return CollectionShape.NotCollection;
+        }
+
+        return new CollectionShape(true, enumerableType.GetGenericArguments()[0]);
     }
 
     private static SerializableMember[] CreateSerializableMembers(Type type)
@@ -96,6 +119,39 @@ internal static class ObjectGraphTypes
         return fields.Concat(properties)
             .OrderBy(m => m.Name, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private readonly struct DictionaryShape
+    {
+        public static readonly DictionaryShape NotDictionary = new(false, typeof(object), typeof(object));
+
+        public DictionaryShape(bool isDictionary, Type keyType, Type valueType)
+        {
+            IsDictionary = isDictionary;
+            KeyType = keyType;
+            ValueType = valueType;
+        }
+
+        public bool IsDictionary { get; }
+
+        public Type KeyType { get; }
+
+        public Type ValueType { get; }
+    }
+
+    private readonly struct CollectionShape
+    {
+        public static readonly CollectionShape NotCollection = new(false, typeof(object));
+
+        public CollectionShape(bool isCollection, Type elementType)
+        {
+            IsCollection = isCollection;
+            ElementType = elementType;
+        }
+
+        public bool IsCollection { get; }
+
+        public Type ElementType { get; }
     }
 }
 
