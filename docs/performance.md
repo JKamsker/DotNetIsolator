@@ -36,6 +36,7 @@ The sample measures:
   member serialization and deserialization
 * an isolated warm-runtime `List<int>` return call that exercises generic
   collection serialization and deserialization
+* isolated warm-runtime typed and raw host-callback calls
 * startup medians without the module cache, with a cold module cache, and with a
   warm module cache
 * repeated runtime startup from one warm host, with and without the runtime
@@ -187,6 +188,10 @@ The following paths were tested and kept:
   cache assembly file bytes by path, length, and last-write timestamp. Each
   runtime still receives a fresh copy into its own guest memory, but repeated
   runtime starts no longer reread the same host files from disk.
+* Host callback dispatch cleanup: callback registration now caches parameter and
+  return type metadata, raw `byte[]` callbacks use the deserialized host-owned
+  argument arrays directly instead of cloning them again, and guest callback
+  result buffers are freed after the guest copies or deserializes them.
 
 ### Rejected
 
@@ -318,6 +323,10 @@ Interpretation:
   same `List<int>[1024]` return from about `20.3 us` at `HEAD` to about
   `8.1 us`, and the generic object return from about `11.0 us` to about
   `8.9 us`, using a payload-heavy close comparison.
+* Removing the duplicate host-side raw callback argument copy reduced a clean
+  A/B sample for a raw 64 KiB host callback from about `88.4 us` at `HEAD` to
+  about `70.7 us`. The callback result buffer is now also released by the guest
+  after copying/deserialization.
 * The warm module cache cuts host construction from about `311 ms` to about
   `1.6 ms`, roughly a `198x` improvement for that phase in this run.
 * Unlocking warm module-cache hits reduced close A/B samples for 16 parallel

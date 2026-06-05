@@ -1,7 +1,5 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
-using DotNetIsolator;
 
 namespace PerformanceSample;
 
@@ -31,7 +29,7 @@ internal static class Program
 
         if (options.ClearCache)
         {
-            ClearDirectory(options.CacheDirectory);
+            StartupBenchmarks.ClearDirectory(options.CacheDirectory);
         }
 
         PrintEnvironment(options);
@@ -44,26 +42,28 @@ internal static class Program
         var payloadResult = WarmCallBenchmarks.MeasureIsolatedPayloadCalls(options, useModuleCache: true);
         var objectPayloadResult = WarmCallBenchmarks.MeasureIsolatedObjectPayloadCalls(options, useModuleCache: true);
         var listPayloadResult = WarmCallBenchmarks.MeasureIsolatedListPayloadCalls(options, useModuleCache: true);
-        var noCacheStartup = MeasureStartup(options, useModuleCache: false, clearCacheBeforeEachSample: false);
+        var typedCallbackResult = WarmCallBenchmarks.MeasureIsolatedTypedCallbackCalls(options, useModuleCache: true);
+        var rawCallbackResult = WarmCallBenchmarks.MeasureIsolatedRawCallbackCalls(options, useModuleCache: true);
+        var noCacheStartup = StartupBenchmarks.MeasureStartup(options, useModuleCache: false, clearCacheBeforeEachSample: false);
 
         if (options.ClearCacheBetweenScenarios)
         {
-            ClearDirectory(options.CacheDirectory);
+            StartupBenchmarks.ClearDirectory(options.CacheDirectory);
         }
 
-        var coldCacheStartup = MeasureStartup(options, useModuleCache: true, clearCacheBeforeEachSample: true);
+        var coldCacheStartup = StartupBenchmarks.MeasureStartup(options, useModuleCache: true, clearCacheBeforeEachSample: true);
 
         if (options.ClearCacheBetweenScenarios)
         {
-            ClearDirectory(options.CacheDirectory);
+            StartupBenchmarks.ClearDirectory(options.CacheDirectory);
         }
 
-        PrimeModuleCache(options);
-        var warmCacheStartup = MeasureStartup(options, useModuleCache: true, clearCacheBeforeEachSample: false);
+        StartupBenchmarks.PrimeModuleCache(options);
+        var warmCacheStartup = StartupBenchmarks.MeasureStartup(options, useModuleCache: true, clearCacheBeforeEachSample: false);
         var concurrentHostStartup = ConcurrentHostBenchmarks.MeasureWarmModuleCacheHostConstruction(options);
-        var warmHostStartup = MeasureWarmHostStartup(options, useRuntimeMemorySnapshot: false);
-        var snapshotPreload = MeasureRuntimeMemorySnapshotPreload(options);
-        var snapshotStartup = MeasureWarmHostStartup(options, useRuntimeMemorySnapshot: true);
+        var warmHostStartup = StartupBenchmarks.MeasureWarmHostStartup(options, useRuntimeMemorySnapshot: false);
+        var snapshotPreload = StartupBenchmarks.MeasureRuntimeMemorySnapshotPreload(options);
+        var snapshotStartup = StartupBenchmarks.MeasureWarmHostStartup(options, useRuntimeMemorySnapshot: true);
 
         Console.WriteLine();
         Console.WriteLine("Steady-state call overhead");
@@ -78,6 +78,8 @@ internal static class Program
         PrintResult(payloadResult);
         PrintResult(objectPayloadResult);
         PrintResult(listPayloadResult);
+        PrintResult(typedCallbackResult);
+        PrintResult(rawCallbackResult);
 
         Console.WriteLine();
         Console.WriteLine("Startup medians");
@@ -95,143 +97,6 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine($"Sink: {MeasurementSink.Value}");
         return 0;
-    }
-
-    private static StartupMeasurement MeasureStartup(
-        BenchmarkOptions options,
-        bool useModuleCache,
-        bool clearCacheBeforeEachSample)
-    {
-        var hostTimes = new List<TimeSpan>();
-        var runtimeTimes = new List<TimeSpan>();
-        var objectTimes = new List<TimeSpan>();
-        var methodTimes = new List<TimeSpan>();
-        var firstCallTimes = new List<TimeSpan>();
-
-        for (var i = 0; i < options.StartupIterations; i++)
-        {
-            if (clearCacheBeforeEachSample)
-            {
-                ClearDirectory(options.CacheDirectory);
-            }
-
-            var stopwatch = Stopwatch.StartNew();
-            using var host = CreateHost(options, useModuleCache);
-            hostTimes.Add(stopwatch.Elapsed);
-
-            stopwatch.Restart();
-            using var runtime = new IsolatedRuntime(host);
-            runtimeTimes.Add(stopwatch.Elapsed);
-
-            stopwatch.Restart();
-            var target = runtime.CreateObject<BenchmarkTarget>();
-            objectTimes.Add(stopwatch.Elapsed);
-
-            stopwatch.Restart();
-            var method = target.FindMethod(nameof(BenchmarkTarget.Increment), 1);
-            methodTimes.Add(stopwatch.Elapsed);
-
-            stopwatch.Restart();
-            MeasurementSink.Consume(method.Invoke<int, int>(target, i));
-            firstCallTimes.Add(stopwatch.Elapsed);
-
-            target.ReleaseGCHandle();
-        }
-
-        return new StartupMeasurement(
-            Median(hostTimes),
-            Median(runtimeTimes),
-            Median(objectTimes),
-            Median(methodTimes),
-            Median(firstCallTimes));
-    }
-
-    private static StartupMeasurement MeasureWarmHostStartup(BenchmarkOptions options, bool useRuntimeMemorySnapshot)
-    {
-        var runtimeTimes = new List<TimeSpan>();
-        var objectTimes = new List<TimeSpan>();
-        var methodTimes = new List<TimeSpan>();
-        var firstCallTimes = new List<TimeSpan>();
-
-        using var host = CreateHost(options, useModuleCache: true, useRuntimeMemorySnapshot);
-        if (useRuntimeMemorySnapshot)
-        {
-            host.PreloadRuntimeMemorySnapshot();
-        }
-
-        for (var i = 0; i < options.StartupIterations; i++)
-        {
-            MeasureRuntimeStartupOnHost(host, i, runtimeTimes, objectTimes, methodTimes, firstCallTimes);
-        }
-
-        return new StartupMeasurement(
-            Host: TimeSpan.Zero,
-            Median(runtimeTimes),
-            Median(objectTimes),
-            Median(methodTimes),
-            Median(firstCallTimes));
-    }
-
-    private static TimeSpan MeasureRuntimeMemorySnapshotPreload(BenchmarkOptions options)
-    {
-        using var host = CreateHost(options, useModuleCache: true, useRuntimeMemorySnapshot: true);
-        return Time(host.PreloadRuntimeMemorySnapshot);
-    }
-
-    private static void MeasureRuntimeStartupOnHost(
-        IsolatedRuntimeHost host,
-        int sample,
-        List<TimeSpan> runtimeTimes,
-        List<TimeSpan> objectTimes,
-        List<TimeSpan> methodTimes,
-        List<TimeSpan> firstCallTimes)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        using var runtime = new IsolatedRuntime(host);
-        runtimeTimes.Add(stopwatch.Elapsed);
-
-        stopwatch.Restart();
-        var target = runtime.CreateObject<BenchmarkTarget>();
-        objectTimes.Add(stopwatch.Elapsed);
-
-        stopwatch.Restart();
-        var method = target.FindMethod(nameof(BenchmarkTarget.Increment), 1);
-        methodTimes.Add(stopwatch.Elapsed);
-
-        stopwatch.Restart();
-        MeasurementSink.Consume(method.Invoke<int, int>(target, sample));
-        firstCallTimes.Add(stopwatch.Elapsed);
-
-        target.ReleaseGCHandle();
-    }
-
-    private static IsolatedRuntimeHost CreateHost(
-        BenchmarkOptions options,
-        bool useModuleCache,
-        bool useRuntimeMemorySnapshot = false)
-        => new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
-        {
-            UsePrecompiledModuleCache = useModuleCache,
-            PrecompiledModuleCacheDirectory = options.CacheDirectory,
-            UseRuntimeMemorySnapshot = useRuntimeMemorySnapshot,
-        }).WithBinDirectoryAssemblyLoader();
-
-    private static void PrimeModuleCache(BenchmarkOptions options)
-    {
-        using var host = CreateHost(options, useModuleCache: true);
-    }
-
-    private static TimeSpan Time(Action action)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        action();
-        return stopwatch.Elapsed;
-    }
-
-    private static TimeSpan Median(List<TimeSpan> values)
-    {
-        values.Sort();
-        return values[values.Count / 2];
     }
 
     private static void PrintEnvironment(BenchmarkOptions options)
@@ -286,25 +151,6 @@ internal static class Program
         }
 
         return $"{totalNanoseconds:N3} ns";
-    }
-
-    private static void ClearDirectory(string directory)
-    {
-        if (!Directory.Exists(directory))
-        {
-            return;
-        }
-
-        DeleteMatchingFiles(directory, "*.cwasm");
-        DeleteMatchingFiles(directory, "*.tmp");
-    }
-
-    private static void DeleteMatchingFiles(string directory, string pattern)
-    {
-        foreach (var file in Directory.EnumerateFiles(directory, pattern))
-        {
-            File.Delete(file);
-        }
     }
 
 }

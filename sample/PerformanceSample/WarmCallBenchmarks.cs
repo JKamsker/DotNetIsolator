@@ -182,6 +182,60 @@ internal static class WarmCallBenchmarks
         return new Measurement("Isolated warm-runtime generic List<int>[1024] return", options.PayloadIterations, elapsed);
     }
 
+    public static Measurement MeasureIsolatedTypedCallbackCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        runtime.RegisterCallback("increment-callback", (int value) => value + 1);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.CallIncrementCallback), 1);
+
+        long sum = 0;
+        for (var i = 0; i < 3; i++)
+        {
+            sum += method.Invoke<int, int>(target, i);
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.IsolatedIterations; i++)
+            {
+                sum += method.Invoke<int, int>(target, i);
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume(sum);
+        return new Measurement("Isolated warm-runtime typed host callback", options.IsolatedIterations, elapsed);
+    }
+
+    public static Measurement MeasureIsolatedRawCallbackCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        runtime.RegisterCallback("raw-buffer-callback", (byte[] buffer) => buffer);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.CallRawBufferCallback), 0);
+
+        long sum = 0;
+        for (var i = 0; i < 3; i++)
+        {
+            sum += method.Invoke<int>(target);
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.PayloadIterations; i++)
+            {
+                sum += method.Invoke<int>(target);
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume(sum);
+        return new Measurement("Isolated warm-runtime raw byte[65536] host callback", options.PayloadIterations, elapsed);
+    }
+
     private static IsolatedRuntimeHost CreateHost(BenchmarkOptions options, bool useModuleCache)
         => new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
         {

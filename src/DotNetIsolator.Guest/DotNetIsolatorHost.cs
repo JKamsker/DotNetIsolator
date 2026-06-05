@@ -57,20 +57,30 @@ public static class DotNetIsolatorHost
         fixed (void* callInfoPtr = callInfoBytes)
         {
             var success = Interop.CallHost(callInfoPtr, callInfoBytes.Length, out var resultPtr, out var resultLength);
-            var hasResult = (int)resultPtr != 0 && (callInfo.IsRawCall || resultLength > 0);
-            var result = hasResult ? new Span<byte>(resultPtr, resultLength) : default;
-            if (success)
+            try
             {
-                return !readResult || !hasResult
-                    ? default!
-                    : callInfo.IsRawCall
-                        ? (T)(object)result.ToArray()
-                        : MessagePackCompatibility.DeserializeObject<T>(result.ToArray())!;
+                var hasResult = (int)resultPtr != 0 && (callInfo.IsRawCall || resultLength > 0);
+                var result = hasResult ? new Span<byte>(resultPtr, resultLength) : default;
+                if (success)
+                {
+                    return !readResult || !hasResult
+                        ? default!
+                        : callInfo.IsRawCall
+                            ? (T)(object)result.ToArray()
+                            : MessagePackCompatibility.DeserializeObject<T>(result.ToArray())!;
+                }
+                else
+                {
+                    var errorString = Encoding.UTF8.GetString(result);
+                    throw new InvalidOperationException($"Call to host failed: {errorString}");
+                }
             }
-            else
+            finally
             {
-                var errorString = Encoding.UTF8.GetString(result);
-                throw new InvalidOperationException($"Call to host failed: {errorString}");
+                if (resultPtr is not null)
+                {
+                    Interop.FreeHostCallResult(resultPtr);
+                }
             }
         }
     }

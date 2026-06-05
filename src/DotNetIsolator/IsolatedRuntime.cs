@@ -1,5 +1,4 @@
 ﻿using DotNetIsolator.Internal;
-using MessagePack;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -24,7 +23,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Action<int> _releaseObject;
     private readonly ConcurrentDictionary<(string AssemblyName, string? Namespace, string? DeclaringTypeName, string TypeName, string MethodName, int NumArgs), IsolatedMethod> _methodLookupCache = new();
     private readonly ShadowStack _shadowStack;
-    private readonly Dictionary<string, Delegate> _registeredCallbacks = new();
+    private readonly HostCallbackRegistry _callbacks = new();
     private bool _isDisposed;
 
     public IsolatedRuntime(IsolatedRuntimeHost host)
@@ -407,7 +406,7 @@ public class IsolatedRuntime : IDisposable
     }
 
     public void RegisterCallback(string name, Delegate callback)
-        => _registeredCallbacks.Add(name, callback);
+        => _callbacks.Add(name, callback);
 
     private IsolatedMethod LookupDelegateMethod(MulticastDelegate @delegate)
     {
@@ -419,65 +418,12 @@ public class IsolatedRuntime : IDisposable
 
     internal int AcceptCallFromGuest(int invocationPtr, int invocationLength, int resultPtrPtr, int resultLengthPtr)
     {
-        try
-        {
-            var invocationInfo = MessagePackSerializer.Deserialize<GuestToHostCall>(
-                _memory.GetSpan<byte>(invocationPtr, invocationLength).ToArray(),
-                MessagePackCompatibility.GuestToHostCallOptions);
-
-            if (!_registeredCallbacks.TryGetValue(invocationInfo.CallbackName, out var callback))
-            {
-                var errorString = Encoding.UTF8.GetBytes($"There is no registered callback with name '{invocationInfo.CallbackName}'");
-                var errorStringPtr = CopyValue<byte>(errorString, false);
-                _memory.WriteInt32(resultPtrPtr, errorStringPtr);
-                _memory.WriteInt32(resultLengthPtr, errorString.Length);
-                return 0;
-            }
-
-            var expectedParameterTypes = callback.Method.GetParameters();
-            var deserializedArgs = new object?[expectedParameterTypes.Length];
-            for (var i = 0; i < expectedParameterTypes.Length; i++)
-            {
-                if (invocationInfo.IsRawCall)
-                {
-                    // Assumes the parameter type is byte[]
-                    deserializedArgs[i] = invocationInfo.Args![i]?.ToArray();
-                }
-                else
-                {
-                    deserializedArgs[i] = MessagePackCompatibility.DeserializeObject(
-                        expectedParameterTypes[i].ParameterType,
-                        invocationInfo.Args[i]);
-                }
-            }
-
-            var result = callback.DynamicInvoke(deserializedArgs);
-            var resultBytes = result is null
-                ? null
-                : invocationInfo.IsRawCall
-                    ? (byte[])result
-                    : MessagePackCompatibility.SerializeObject(
-                        callback.Method.ReturnType,
-                        result);
-
-            var resultPtr = resultBytes is null ? 0 : CopyValue<byte>(resultBytes, false);
-            _memory.WriteInt32(resultPtrPtr, resultPtr);
-            _memory.WriteInt32(resultLengthPtr, resultBytes is null ? 0 : resultBytes.Length);
-            return 1; // Success
-        }
-        catch (Exception ex)
-        {
-            // We could supply the raw exception info to the guest, but since we consider the guest untrusted,
-            // we don't want to expose arbitrary information about the host internals. Ideally this behavior would
-            // vary based on whether this is a dev or prod scenario, but that's not a concept that exists natively
-            // in .NET (whereas it does in ASP.NET Core).
-            Console.Error.WriteLine(ex.ToString());
-            var resultBytes = Encoding.UTF8.GetBytes("The call failed. See host console logs for details.");
-            var resultPtr = CopyValue<byte>(resultBytes, false);
-            _memory.WriteInt32(resultPtrPtr, resultPtr);
-            _memory.WriteInt32(resultLengthPtr, resultBytes.Length);
-            return 0; // Failure
-        }
+        var response = _callbacks.Invoke(_memory.GetSpan<byte>(invocationPtr, invocationLength));
+        var resultBytes = response.ResultBytes;
+        var resultPtr = resultBytes is null ? 0 : CopyValue<byte>(resultBytes, false);
+        _memory.WriteInt32(resultPtrPtr, resultPtr);
+        _memory.WriteInt32(resultLengthPtr, resultBytes is null ? 0 : resultBytes.Length);
+        return response.IsSuccess ? 1 : 0;
     }
 
     [StructLayout(LayoutKind.Sequential)]

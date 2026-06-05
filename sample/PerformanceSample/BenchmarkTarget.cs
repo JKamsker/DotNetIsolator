@@ -1,10 +1,12 @@
 using System.Runtime.CompilerServices;
+using DotNetIsolator;
 
 namespace PerformanceSample;
 
 public sealed class BenchmarkTarget
 {
-    private readonly byte[] _buffer = CreateBuffer();
+    private readonly byte[] _buffer = CreateBuffer(4096);
+    private readonly byte[] _largeBuffer = CreateBuffer(64 * 1024);
     private readonly List<int> _numbers = CreateNumbers();
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -34,9 +36,17 @@ public sealed class BenchmarkTarget
     public List<int> ReturnNumbers()
         => _numbers;
 
-    private static byte[] CreateBuffer()
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public int CallIncrementCallback(int value)
+        => DotNetIsolatorHost.Invoke<int>("increment-callback", value);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public int CallRawBufferCallback()
+        => DotNetIsolatorHost.InvokeRaw("raw-buffer-callback", _largeBuffer).Length;
+
+    private static byte[] CreateBuffer(int length)
     {
-        var buffer = new byte[4096];
+        var buffer = new byte[length];
         for (var i = 0; i < buffer.Length; i++)
         {
             buffer[i] = (byte)i;
