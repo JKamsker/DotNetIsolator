@@ -25,7 +25,7 @@ The sample measures:
 
 * a direct host call to `BenchmarkTarget.Increment`
 * an isolated warm-runtime call to the same method, with the isolated object and
-  method lookup already created
+  method lookup already created. This uses the scalar `int -> int` fast path.
 * startup medians without the module cache, with a cold module cache, and with a
   warm module cache
 * repeated runtime startup from one warm host, with and without the runtime
@@ -81,6 +81,19 @@ snapshot is preloaded off the critical path. It is also narrower than Wizer: it
 copies linear memory, not arbitrary tables or globals. It is covered by startup
 and host-callback tests for the current generated .NET 10 module.
 
+## Scalar fast path
+
+The generic invocation path still supports arbitrary serializable object graphs,
+but it is far too expensive for primitive calls. DotNetIsolator now has a native
+`int -> int` fast path that bypasses object-graph serialization for
+`IsolatedMethod.Invoke<int, int>`. It passes the integer argument directly to
+`mono_runtime_invoke`, unboxes the integer result in native code, and only uses
+the existing managed serialization path for other shapes.
+
+This is intentionally narrow. It preserves existing behavior for complex
+arguments and return values, while proving that the boundary can be made much
+cheaper for common scalar signatures.
+
 ## Measured Results
 
 Measured on June 5, 2026:
@@ -90,34 +103,37 @@ Measured on June 5, 2026:
 * WASI SDK 25.0
 * Wasmtime .NET package 44.0.0
 
-Representative run:
+Representative run with `--isolated-iterations 100000 --startup-iterations 5`:
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 17.600 ms, mean 1.760 ns
-Isolated warm-runtime Increment: total 74.442 ms, mean 37.221 us
-Isolated/direct mean ratio: 21,148x
+Direct host Increment: total 17.745 ms, mean 1.775 ns
+Isolated warm-runtime Increment: total 24.771 ms, mean 247.714 ns
+Isolated/direct mean ratio: 140x
 
 Startup medians
-No module cache: host 320.187 ms, runtime 46.153 ms, object 446.700 us, method 186.600 us, first call 1.461 ms
-Cold module cache: host 456.377 ms, runtime 55.407 ms, object 558.300 us, method 190.700 us, first call 1.358 ms
-Warm module cache: host 2.123 ms, runtime 61.453 ms, object 371.800 us, method 143.200 us, first call 1.033 ms
-Warm host: runtime 52.594 ms, object 447.500 us, method 171.400 us, first call 1.481 ms
-Runtime memory snapshot preload: 102.919 ms
-Warm runtime memory snapshot: runtime 17.497 ms, object 581.400 us, method 161.500 us, first call 1.513 ms
+No module cache: host 301.500 ms, runtime 36.902 ms, object 347.600 us, method 115.300 us, first call 53.200 us
+Cold module cache: host 327.497 ms, runtime 42.183 ms, object 429.100 us, method 179.800 us, first call 90.500 us
+Warm module cache: host 1.581 ms, runtime 45.727 ms, object 319.800 us, method 131.700 us, first call 68.900 us
+Warm host: runtime 39.762 ms, object 424.800 us, method 155.000 us, first call 61.500 us
+Runtime memory snapshot preload: 84.893 ms
+Warm runtime memory snapshot: runtime 14.105 ms, object 387.900 us, method 109.500 us, first call 64.200 us
 ```
 
 Interpretation:
 
-* A best-case warm isolated call is around `37 us` on this machine, versus about
-  `1.8 ns` for the direct host call. That is roughly `20,000x` slower for this
-  tiny method. Larger guest workloads amortize the boundary cost better.
-* The warm module cache cuts host construction from about `320 ms` to about
-  `2.1 ms`, roughly a `150x` improvement for that phase.
+* A best-case warm isolated scalar call is around `248 ns` on this machine,
+  versus about `1.8 ns` for the direct host call. That is roughly `140x` slower
+  for this tiny method.
+* Before the scalar fast path, the same benchmark measured about `37 us` per
+  isolated call and about `21,000x` direct-call overhead on this machine. The
+  fast path cuts the measured isolated call cost by roughly `150x`.
+* The warm module cache cuts host construction from about `302 ms` to about
+  `1.6 ms`, roughly a `190x` improvement for that phase.
 * The first cache miss is slower than no cache because it compiles and writes the
   serialized module. The cache is intended for repeated host construction.
-* Runtime startup on a warm host is still about `53 ms` because the .NET WASI
+* Runtime startup on a warm host is still about `40 ms` because the .NET WASI
   runtime is still instantiated and started.
 * The runtime memory snapshot moves one-time startup work into a preload step and
-  cuts repeated runtime construction to about `17.5 ms`, roughly a `3x`
+  cuts repeated runtime construction to about `14 ms`, roughly a `3x`
   improvement for that phase.

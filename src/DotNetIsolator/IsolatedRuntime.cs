@@ -17,6 +17,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int, int, int> _instantiateDotNetClass;
     private readonly Func<int, int, int, int, int, int, int> _lookupDotNetMethod;
     private readonly Func<int, int, int> _deserializeAsDotNetObject;
+    private readonly Func<int, int, int, int, int, int> _invokeInt32Method;
     private readonly Action<int> _invokeDotNetMethod;
     private readonly Action<int> _releaseObject;
     private readonly ConcurrentDictionary<(string AssemblyName, string? Namespace, string TypeName, string MethodName, int NumArgs), IsolatedMethod> _methodLookupCache = new();
@@ -39,6 +40,7 @@ public class IsolatedRuntime : IDisposable
         _instantiateDotNetClass = exports.InstantiateDotNetClass;
         _lookupDotNetMethod = exports.LookupDotNetMethod;
         _deserializeAsDotNetObject = exports.DeserializeAsDotNetObject;
+        _invokeInt32Method = exports.InvokeInt32Method;
         _invokeDotNetMethod = exports.InvokeDotNetMethod;
         _releaseObject = exports.ReleaseObject;
 
@@ -208,6 +210,33 @@ public class IsolatedRuntime : IDisposable
     }
 
     // Internal because you only need to call it via DotNetMethod
+    internal int InvokeInt32Method(int monoMethodPtr, IsolatedObject? instance, int arg0)
+    {
+        var result = _shadowStack.Push<int>();
+        var errorMessage = _shadowStack.Push<int>();
+        try
+        {
+            var success = _invokeInt32Method(
+                instance is null ? 0 : instance.GuestGCHandle,
+                monoMethodPtr,
+                arg0,
+                result.Address,
+                errorMessage.Address);
+
+            if (success == 0)
+            {
+                throw new IsolatedException(ReadDotNetString(errorMessage.Value) ?? "The method call failed.");
+            }
+
+            return result.Value;
+        }
+        finally
+        {
+            errorMessage.Pop();
+            result.Pop();
+        }
+    }
+
     internal TRes InvokeDotNetMethod<TRes>(int monoMethodPtr, IsolatedObject? instance, ReadOnlySpan<int> argAddresses)
     {
         // Prepare an Invocation struct within guest memory

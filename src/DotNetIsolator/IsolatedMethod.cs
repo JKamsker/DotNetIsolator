@@ -21,6 +21,15 @@ public class IsolatedMethod
 
     public TRes Invoke<T0, TRes>(IsolatedObject? instance, T0 param0)
     {
+        if (typeof(T0) == typeof(int) && typeof(TRes) == typeof(int))
+        {
+            var result = _runtimeInstance.InvokeInt32Method(
+                _monoMethodPtr,
+                instance,
+                (int)(object)param0!);
+            return (TRes)(object)result;
+        }
+
         // Ideally we'd serialize directly into guest memory but that probably involves implementing
         // an IBufferWriter<byte> that knows how to allocate chunks of guest memory
         // We might also want to special-case some basic known parameter types and skip MessagePack

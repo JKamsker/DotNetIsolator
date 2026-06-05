@@ -32,6 +32,16 @@ public class MethodInvocationTest : IDisposable
             .Invoke<int, int>(nameof(TestClass.IntParamMethod), 123));
 
     [Fact]
+    public void IntParamMethodExceptionsSurfaceInHost()
+    {
+        var obj = _runtime.CreateObject<TestClass>();
+
+        var ex = Assert.Throws<IsolatedException>(() => obj.Invoke<int, int>(nameof(TestClass.ThrowIntParamException), 123));
+        Assert.Contains("System.InvalidTimeZoneException: This is a guest exception", ex.ToString());
+        Assert.Contains($"at {typeof(TestClass).FullName!.Replace('+', '.')}.ThrowIntParamException(Int32 value)", ex.ToString());
+    }
+
+    [Fact]
     public void CanInvokeBoolParamMethod()
     {
         var obj = _runtime.CreateObject<TestClass>();
@@ -147,8 +157,11 @@ public class MethodInvocationTest : IDisposable
         public string SimpleParamsMethod(int a, bool b, string c)
             => $"[a={a}][b={b}][c={c}]";
 
-            public void ThrowException()
-                => throw new InvalidTimeZoneException("This is a guest exception");
+        public void ThrowException()
+            => throw new InvalidTimeZoneException("This is a guest exception");
+
+        public int ThrowIntParamException(int value)
+            => throw new InvalidTimeZoneException("This is a guest exception");
 
         public class MyComplexObject
         {

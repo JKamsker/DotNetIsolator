@@ -11,6 +11,7 @@ internal sealed class IsolatedRuntimeExports
         Func<int, int, int, int, int> instantiateDotNetClass,
         Func<int, int, int, int, int, int, int> lookupDotNetMethod,
         Func<int, int, int> deserializeAsDotNetObject,
+        Func<int, int, int, int, int, int> invokeInt32Method,
         Action<int> invokeDotNetMethod,
         Action<int> releaseObject,
         Action start)
@@ -21,6 +22,7 @@ internal sealed class IsolatedRuntimeExports
         InstantiateDotNetClass = instantiateDotNetClass;
         LookupDotNetMethod = lookupDotNetMethod;
         DeserializeAsDotNetObject = deserializeAsDotNetObject;
+        InvokeInt32Method = invokeInt32Method;
         InvokeDotNetMethod = invokeDotNetMethod;
         ReleaseObject = releaseObject;
         Start = start;
@@ -32,6 +34,7 @@ internal sealed class IsolatedRuntimeExports
     public Func<int, int, int, int, int> InstantiateDotNetClass { get; }
     public Func<int, int, int, int, int, int, int> LookupDotNetMethod { get; }
     public Func<int, int, int> DeserializeAsDotNetObject { get; }
+    public Func<int, int, int, int, int, int> InvokeInt32Method { get; }
     public Action<int> InvokeDotNetMethod { get; }
     public Action<int> ReleaseObject { get; }
     public Action Start { get; }
@@ -50,6 +53,8 @@ internal sealed class IsolatedRuntimeExports
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_lookup_method'");
         var deserializeAsDotNetObject = instance.GetFunction<int, int, int>("dotnetisolator_deserialize_object")
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_deserialize_object'");
+        var invokeInt32Method = instance.GetFunction<int, int, int, int, int, int>("dotnetisolator_invoke_i32_i32")
+            ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_i32_i32'");
         var invokeDotNetMethod = instance.GetAction<int>("dotnetisolator_invoke_method")
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_method'");
         var releaseObject = instance.GetAction<int>("dotnetisolator_release_object")
@@ -64,6 +69,7 @@ internal sealed class IsolatedRuntimeExports
             instantiateDotNetClass,
             lookupDotNetMethod,
             deserializeAsDotNetObject,
+            invokeInt32Method,
             invokeDotNetMethod,
             releaseObject,
             start);

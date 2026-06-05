@@ -35,6 +35,7 @@
 		<LinkerArg Include="-Wl,--skip-wit-component" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_deserialize_object" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_instantiate_class" />
+		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_i32_i32" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_method" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_lookup_method" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_release_object" />

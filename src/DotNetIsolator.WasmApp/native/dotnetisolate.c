@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <mono/metadata/class.h>
+#include <mono/metadata/metadata.h>
 #include <mono/metadata/object.h>
 #include <wasm/driver.h>
 
@@ -78,6 +79,25 @@ MonoMethod* dotnetisolator_lookup_method(char* assembly_name, char* namespace, c
 
 MonoMethod* deserialize_param_dotnet_method;
 MonoMethod* serialize_return_value_dotnet_method;
+
+int fail_with_message(const char* message, MonoString** error_msg) {
+	*error_msg = mono_string_new_wrapper(message);
+	return 0;
+}
+
+int method_signature_is_i32_i32(MonoMethod* method) {
+	MonoMethodSignature* signature = mono_method_signature(method);
+	if (mono_signature_get_param_count(signature) != 1) {
+		return 0;
+	}
+
+	void* iterator = NULL;
+	MonoType* parameter_type = mono_signature_get_params(signature, &iterator);
+	MonoType* return_type = mono_signature_get_return_type(signature);
+
+	return mono_type_get_type(parameter_type) == MONO_TYPE_I4
+		&& mono_type_get_type(return_type) == MONO_TYPE_I4;
+}
 
 void* deserialize_param(void* length_prefixed_buffer, MonoGCHandle* value_handle, MonoObject** exception_buf) {
 	if (!length_prefixed_buffer) {
@@ -165,6 +185,33 @@ void dotnetisolator_invoke_method(RunnerInvocation* invocation) {
 		MonoObject* ignored_tostring_exception;
 		invocation->result_exception = mono_object_to_string(exc, &ignored_tostring_exception);
 	}
+}
+
+__attribute__((export_name("dotnetisolator_invoke_i32_i32")))
+int dotnetisolator_invoke_i32_i32(MonoGCHandle target, MonoMethod* method_ptr, int arg0, int* result, MonoString** error_msg) {
+	*error_msg = NULL;
+
+	if (!method_signature_is_i32_i32(method_ptr)) {
+		return fail_with_message("The method does not have the required int -> int signature.", error_msg);
+	}
+
+	void* method_params[] = { &arg0 };
+	MonoObject* exc = NULL;
+	MonoObject* target_object = target ? mono_gchandle_get_target((uint32_t)target) : 0;
+	MonoObject* result_object = mono_runtime_invoke(method_ptr, target_object, method_params, &exc);
+
+	if (exc) {
+		MonoObject* ignored_tostring_exception;
+		*error_msg = mono_object_to_string(exc, &ignored_tostring_exception);
+		return 0;
+	}
+
+	if (!result_object) {
+		return fail_with_message("The method returned null instead of int.", error_msg);
+	}
+
+	*result = *(int*)mono_object_unbox(result_object);
+	return 1;
 }
 
 __attribute__((export_name("dotnetisolator_deserialize_object")))
