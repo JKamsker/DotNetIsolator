@@ -51,6 +51,31 @@ internal static class WarmCallBenchmarks
         return new Measurement("Isolated warm-runtime Increment", options.IsolatedIterations, elapsed);
     }
 
+    public static Measurement MeasureIsolatedPublicInvokeCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+
+        long sum = 0;
+        for (var i = 0; i < 10; i++)
+        {
+            sum += target.Invoke<int, int>(nameof(BenchmarkTarget.Increment), i);
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.IsolatedIterations; i++)
+            {
+                sum += target.Invoke<int, int>(nameof(BenchmarkTarget.Increment), i);
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume(sum);
+        return new Measurement("Isolated warm-runtime public Invoke Increment", options.IsolatedIterations, elapsed);
+    }
+
     public static Measurement MeasureIsolatedZeroArgIntCalls(BenchmarkOptions options, bool useModuleCache)
     {
         using var host = CreateHost(options, useModuleCache);

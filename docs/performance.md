@@ -26,6 +26,8 @@ The sample measures:
 * a direct host call to `BenchmarkTarget.Increment`
 * an isolated warm-runtime call to the same method, with the isolated object and
   method lookup already created. This uses the scalar `int -> int` fast path.
+* an isolated warm-runtime public `IsolatedObject.Invoke` call to the same
+  method, including the public method lookup path.
 * an isolated warm-runtime zero-argument `int` return call that uses the scalar
   result fast path
 * an isolated warm-runtime 4 KiB `byte[]` return call that exercises generic
@@ -139,6 +141,12 @@ The following paths were tested and kept:
 * Native zero-argument `int` return path: `IsolatedMethod.Invoke<int>` bypasses
   result serialization for exact `() -> int` methods while keeping native
   signature validation.
+* Arity-aware public method lookup cache: `IsolatedObject.FindMethod` now passes
+  the requested argument count into the runtime lookup, caches successful
+  lookups on the object, and the runtime cache key includes the declaring type
+  name. This avoids repeated full runtime-cache hashing on public
+  `IsolatedObject.Invoke` calls and prevents nested-type method cache
+  collisions.
 * Shadow-stack generic invocation frame: the generic invocation path now places
   its transient `Invocation` struct on the per-runtime shadow stack and skips the
   empty guest args-buffer allocation for zero-argument calls. This preserves
@@ -223,28 +231,29 @@ Representative run with
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 90.278 ms, mean 1.806 ns
-Isolated warm-runtime Increment: total 173.155 ms, mean 173.155 ns
-Isolated/direct mean ratio: 96x
+Direct host Increment: total 113.913 ms, mean 2.278 ns
+Isolated warm-runtime Increment: total 190.360 ms, mean 190.360 ns
+Isolated warm-runtime public Invoke Increment: total 302.723 ms, mean 302.723 ns
+Isolated/direct mean ratio: 84x
 
 Additional warm-call overhead
-Isolated warm-runtime zero-arg int return: total 3.828 ms, mean 191.375 ns
-Isolated warm-runtime generic byte[4096] return: total 6.570 ms, mean 13.140 us
-Isolated warm-runtime generic object return: total 34.400 ms, mean 68.800 us
+Isolated warm-runtime zero-arg int return: total 4.658 ms, mean 232.900 ns
+Isolated warm-runtime generic byte[4096] return: total 8.203 ms, mean 16.407 us
+Isolated warm-runtime generic object return: total 40.866 ms, mean 81.733 us
 
 Startup medians
-No module cache: host 304.651 ms, runtime 36.413 ms, object 386.500 us, method 118.500 us, first call 52.300 us
-Cold module cache: host 336.658 ms, runtime 36.880 ms, object 393.000 us, method 135.500 us, first call 54.500 us
-Warm module cache: host 2.095 ms, runtime 60.660 ms, object 566.600 us, method 198.300 us, first call 88.000 us
-Warm host: runtime 41.067 ms, object 390.800 us, method 120.100 us, first call 62.100 us
-Runtime memory snapshot preload: 88.493 ms
-Warm runtime memory snapshot: runtime 3.078 ms, object 398.100 us, method 126.600 us, first call 61.200 us
+No module cache: host 367.679 ms, runtime 46.587 ms, object 499.100 us, method 159.900 us, first call 59.700 us
+Cold module cache: host 359.519 ms, runtime 42.116 ms, object 410.200 us, method 144.700 us, first call 66.100 us
+Warm module cache: host 1.647 ms, runtime 46.881 ms, object 375.100 us, method 147.300 us, first call 93.900 us
+Warm host: runtime 43.949 ms, object 448.700 us, method 191.000 us, first call 72.500 us
+Runtime memory snapshot preload: 84.005 ms
+Warm runtime memory snapshot: runtime 3.285 ms, object 451.100 us, method 123.200 us, first call 73.200 us
 ```
 
 Interpretation:
 
-* A representative warm isolated scalar call is around `173 ns` on this machine,
-  versus about `1.8 ns` for the direct host call. That is roughly `96x` slower
+* A representative warm isolated scalar call is around `190 ns` on this machine,
+  versus about `2.3 ns` for the direct host call. That is roughly `84x` slower
   for this tiny method.
 * Before the scalar fast path, the same benchmark measured about `37 us` per
   isolated call and about `21,000x` direct-call overhead on this machine. The
@@ -253,11 +262,14 @@ Interpretation:
 * The zero-argument `int` return path now bypasses result serialization for
   exact `() -> int` methods. Before that fast path, nearby samples measured
   about `2.3-2.5 us`; the representative fast-path sample above is about
-  `191 ns`.
+  `233 ns`.
+* The public `IsolatedObject.Invoke` path remains slower than reusing an
+  `IsolatedMethod`, but the object-local method cache reduced close A/B samples
+  from about `306 ns` to about `267-277 ns` for repeated public scalar calls.
 * Avoiding the duplicate deserialization copy reduced close A/B samples for the
   4 KiB generic byte-array return from about `14.65 us` to about `13.33 us`.
-* The warm module cache cuts host construction from about `305 ms` to about
-  `2.1 ms`, roughly a `145x` improvement for that phase in this run.
+* The warm module cache cuts host construction from about `368 ms` to about
+  `1.6 ms`, roughly a `223x` improvement for that phase in this run.
 * The first cache miss is slower than no cache because it compiles and writes the
   serialized module. The cache is intended for repeated host construction.
 * Runtime startup on a warm host is still about `40-60 ms` because the .NET WASI

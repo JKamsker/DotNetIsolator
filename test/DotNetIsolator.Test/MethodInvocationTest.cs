@@ -86,6 +86,25 @@ public class MethodInvocationTest : IDisposable
             .Invoke<string, string>(nameof(TestClass.StringParamMethod), "Hello world"));
 
     [Fact]
+    public void CanInvokeOverloadedMethods()
+    {
+        var obj = _runtime.CreateObject<TestClass>();
+
+        Assert.Equal("no args", obj.Invoke<string>(nameof(TestClass.OverloadedMethod)));
+        Assert.Equal("arg 123", obj.Invoke<int, string>(nameof(TestClass.OverloadedMethod), 123));
+    }
+
+    [Fact]
+    public void MethodCacheIncludesDeclaringTypeName()
+    {
+        var first = _runtime.CreateObject<FirstOuter.SameName>();
+        var second = _runtime.CreateObject<SecondOuter.SameName>();
+
+        Assert.Equal("first", first.Invoke<string>(nameof(FirstOuter.SameName.Identity)));
+        Assert.Equal("second", second.Invoke<string>(nameof(SecondOuter.SameName.Identity)));
+    }
+
+    [Fact]
     public void CanInvokeComplexParamMethod()
     {
         var paramValue = TestClass.MyComplexObject.CreateTestValue();
@@ -188,6 +207,12 @@ public class MethodInvocationTest : IDisposable
         public string StringParamMethod(string val)
             => val.ToUpperInvariant();
 
+        public string OverloadedMethod()
+            => "no args";
+
+        public string OverloadedMethod(int value)
+            => $"arg {value}";
+
         public string ComplexParamMethod(MyComplexObject val)
             => val.ToString()!;
 
@@ -245,5 +270,23 @@ public class MethodInvocationTest : IDisposable
                 return sb.ToString();
             }
         }
+    }
+}
+
+class FirstOuter
+{
+    public class SameName
+    {
+        public string Identity()
+            => "first";
+    }
+}
+
+class SecondOuter
+{
+    public class SameName
+    {
+        public string Identity()
+            => "second";
     }
 }

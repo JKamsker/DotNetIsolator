@@ -7,6 +7,7 @@ public class IsolatedObject
     private readonly string? _namespace;
     private readonly string? _declaringTypeName;
     private readonly string _typeName;
+    private readonly Dictionary<(string MethodName, int NumArgs), IsolatedMethod> _methodCache = new();
 
     internal IsolatedObject(IsolatedRuntime runtimeInstance, int gcHandle, string assemblyName, string? @namespace, string? declaringTypeName, string typeName)
     {
@@ -27,7 +28,14 @@ public class IsolatedObject
             throw new InvalidOperationException("Cannot look up instance method because the object has already been released.");
         }
 
-        return _runtimeInstance.GetMethod(_assemblyName, _namespace, _declaringTypeName, _typeName, methodName);
+        var key = (methodName, numArgs);
+        if (!_methodCache.TryGetValue(key, out var method))
+        {
+            method = _runtimeInstance.GetMethod(_assemblyName, _namespace, _declaringTypeName, _typeName, methodName, numArgs);
+            _methodCache.Add(key, method);
+        }
+
+        return method;
     }
 
     public TRes Invoke<TRes>(string methodName)

@@ -39,6 +39,7 @@ internal static class Program
         var target = new BenchmarkTarget();
         var hostResult = WarmCallBenchmarks.MeasureDirectHost(target, options.HostIterations);
         var isolatedResult = WarmCallBenchmarks.MeasureIsolatedCalls(options, useModuleCache: true);
+        var publicInvokeResult = WarmCallBenchmarks.MeasureIsolatedPublicInvokeCalls(options, useModuleCache: true);
         var zeroArgResult = WarmCallBenchmarks.MeasureIsolatedZeroArgIntCalls(options, useModuleCache: true);
         var payloadResult = WarmCallBenchmarks.MeasureIsolatedPayloadCalls(options, useModuleCache: true);
         var objectPayloadResult = WarmCallBenchmarks.MeasureIsolatedObjectPayloadCalls(options, useModuleCache: true);
@@ -66,6 +67,7 @@ internal static class Program
         Console.WriteLine("Steady-state call overhead");
         PrintResult(hostResult);
         PrintResult(isolatedResult);
+        PrintResult(publicInvokeResult);
         Console.WriteLine($"Isolated/direct mean ratio: {isolatedResult.MeanNanoseconds / hostResult.MeanNanoseconds:N0}x");
 
         Console.WriteLine();

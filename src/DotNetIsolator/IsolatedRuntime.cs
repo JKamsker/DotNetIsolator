@@ -21,7 +21,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int, long> _invokeInt32MethodPacked;
     private readonly Action<int> _invokeDotNetMethod;
     private readonly Action<int> _releaseObject;
-    private readonly ConcurrentDictionary<(string AssemblyName, string? Namespace, string TypeName, string MethodName, int NumArgs), IsolatedMethod> _methodLookupCache = new();
+    private readonly ConcurrentDictionary<(string AssemblyName, string? Namespace, string? DeclaringTypeName, string TypeName, string MethodName, int NumArgs), IsolatedMethod> _methodLookupCache = new();
     private readonly ShadowStack _shadowStack;
     private readonly Dictionary<string, Delegate> _registeredCallbacks = new();
     private bool _isDisposed;
@@ -179,10 +179,10 @@ public class IsolatedRuntime : IDisposable
     {
         // Consider a multilevel cache keyed first by type so that successive "GetMethod" calls on the same type
         // don't have to hash so many strings. Also handle lookup failures in a better way.
-        return _methodLookupCache.GetOrAdd((assemblyName, @namespace, typeName, methodName, numArgs), info =>
+        return _methodLookupCache.GetOrAdd((assemblyName, @namespace, declaringTypeName, typeName, methodName, numArgs), info =>
         {
             // All these CopyValue strings are freed inside the C code
-            var monoClassName = declaringTypeName is null ? typeName : $"{declaringTypeName}/{typeName}";
+            var monoClassName = info.DeclaringTypeName is null ? info.TypeName : $"{info.DeclaringTypeName}/{info.TypeName}";
 
             var errorMessageParam = _shadowStack.Push<int>();
             try
