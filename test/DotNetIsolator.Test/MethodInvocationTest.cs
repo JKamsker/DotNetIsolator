@@ -23,8 +23,31 @@ public class MethodInvocationTest : IDisposable
         => Assert.Equal(123, _runtime.CreateObject<TestClass>().Invoke<int>(nameof(TestClass.IntMethod)));
 
     [Fact]
+    public void CanInvokeParameterlessNegativeIntMethod()
+        => Assert.Equal(-123, _runtime.CreateObject<TestClass>().Invoke<int>(nameof(TestClass.NegativeIntMethod)));
+
+    [Fact]
     public void CanInvokeParameterlessStringMethod()
         => Assert.Equal("Hello", _runtime.CreateObject<TestClass>().Invoke<string>(nameof(TestClass.StringMethod)));
+
+    [Fact]
+    public void ParameterlessIntMethodExceptionsSurfaceInHost()
+    {
+        var obj = _runtime.CreateObject<TestClass>();
+
+        var ex = Assert.Throws<IsolatedException>(() => obj.Invoke<int>(nameof(TestClass.ThrowIntException)));
+        Assert.Contains("System.InvalidTimeZoneException: This is a guest exception", ex.ToString());
+        Assert.Contains($"at {typeof(TestClass).FullName!.Replace('+', '.')}.ThrowIntException()", ex.ToString());
+    }
+
+    [Fact]
+    public void ParameterlessIntFastPathRejectsWrongSignature()
+    {
+        var obj = _runtime.CreateObject<TestClass>();
+
+        var ex = Assert.Throws<IsolatedException>(() => obj.Invoke<int>(nameof(TestClass.StringMethod)));
+        Assert.Equal("The method does not have the required () -> int signature.", ex.Message);
+    }
 
     [Fact]
     public void CanInvokeIntParamMethod()
@@ -144,6 +167,9 @@ public class MethodInvocationTest : IDisposable
         public int IntMethod()
             => 123;
 
+        public int NegativeIntMethod()
+            => -123;
+
         public string StringMethod()
             => "Hello";
 
@@ -169,6 +195,9 @@ public class MethodInvocationTest : IDisposable
             => $"[a={a}][b={b}][c={c}]";
 
         public void ThrowException()
+            => throw new InvalidTimeZoneException("This is a guest exception");
+
+        public int ThrowIntException()
             => throw new InvalidTimeZoneException("This is a guest exception");
 
         public int ThrowIntParamException(int value)

@@ -51,7 +51,7 @@ internal static class WarmCallBenchmarks
         return new Measurement("Isolated warm-runtime Increment", options.IsolatedIterations, elapsed);
     }
 
-    public static Measurement MeasureIsolatedGenericCalls(BenchmarkOptions options, bool useModuleCache)
+    public static Measurement MeasureIsolatedZeroArgIntCalls(BenchmarkOptions options, bool useModuleCache)
     {
         using var host = CreateHost(options, useModuleCache);
         using var runtime = new IsolatedRuntime(host);
@@ -66,7 +66,7 @@ internal static class WarmCallBenchmarks
 
         var elapsed = Time(() =>
         {
-            for (var i = 0; i < options.GenericIterations; i++)
+            for (var i = 0; i < options.ZeroArgIterations; i++)
             {
                 sum += method.Invoke<int>(target);
             }
@@ -74,7 +74,7 @@ internal static class WarmCallBenchmarks
 
         target.ReleaseGCHandle();
         MeasurementSink.Consume(sum);
-        return new Measurement("Isolated warm-runtime generic int return", options.GenericIterations, elapsed);
+        return new Measurement("Isolated warm-runtime zero-arg int return", options.ZeroArgIterations, elapsed);
     }
 
     public static Measurement MeasureIsolatedPayloadCalls(BenchmarkOptions options, bool useModuleCache)

@@ -100,6 +100,14 @@ int method_signature_is_i32_i32(MonoMethod* method) {
 		&& mono_type_get_type(return_type) == MONO_TYPE_I4;
 }
 
+int method_signature_is_i32(MonoMethod* method) {
+	MonoMethodSignature* signature = mono_method_signature(method);
+	MonoType* return_type = mono_signature_get_return_type(signature);
+
+	return mono_signature_get_param_count(signature) == 0
+		&& mono_type_get_type(return_type) == MONO_TYPE_I4;
+}
+
 void* deserialize_param(void* length_prefixed_buffer, MonoGCHandle* value_handle, MonoObject** exception_buf) {
 	if (!length_prefixed_buffer) {
 		return NULL;
@@ -214,9 +222,46 @@ static int invoke_i32_i32(MonoGCHandle target, MonoMethod* method_ptr, int arg0,
 	return 1;
 }
 
+static int invoke_i32(MonoGCHandle target, MonoMethod* method_ptr, int* result, MonoString** error_msg) {
+	*error_msg = NULL;
+
+	if (!method_signature_is_i32(method_ptr)) {
+		return fail_with_message("The method does not have the required () -> int signature.", error_msg);
+	}
+
+	MonoObject* exc = NULL;
+	MonoObject* target_object = target ? mono_gchandle_get_target((uint32_t)target) : 0;
+	MonoObject* result_object = mono_runtime_invoke(method_ptr, target_object, NULL, &exc);
+
+	if (exc) {
+		MonoObject* ignored_tostring_exception;
+		*error_msg = mono_object_to_string(exc, &ignored_tostring_exception);
+		return 0;
+	}
+
+	if (!result_object) {
+		return fail_with_message("The method returned null instead of int.", error_msg);
+	}
+
+	*result = *(int*)mono_object_unbox(result_object);
+	return 1;
+}
+
 __attribute__((export_name("dotnetisolator_invoke_i32_i32")))
 int dotnetisolator_invoke_i32_i32(MonoGCHandle target, MonoMethod* method_ptr, int arg0, int* result, MonoString** error_msg) {
 	return invoke_i32_i32(target, method_ptr, arg0, result, error_msg);
+}
+
+__attribute__((export_name("dotnetisolator_invoke_i32_packed")))
+uint64_t dotnetisolator_invoke_i32_packed(MonoGCHandle target, MonoMethod* method_ptr) {
+	int result = 0;
+	MonoString* error_msg = NULL;
+	if (!invoke_i32(target, method_ptr, &result, &error_msg)) {
+		uint32_t error_address = error_msg ? (uint32_t)(uintptr_t)error_msg : 1;
+		return ((uint64_t)error_address) << 32;
+	}
+
+	return (uint32_t)result;
 }
 
 __attribute__((export_name("dotnetisolator_invoke_i32_i32_packed")))

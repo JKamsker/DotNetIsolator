@@ -17,6 +17,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int, int, int> _instantiateDotNetClass;
     private readonly Func<int, int, int, int, int, int, int> _lookupDotNetMethod;
     private readonly Func<int, int, int> _deserializeAsDotNetObject;
+    private readonly Func<int, int, long> _invokeInt32MethodNoArgsPacked;
     private readonly Func<int, int, int, long> _invokeInt32MethodPacked;
     private readonly Action<int> _invokeDotNetMethod;
     private readonly Action<int> _releaseObject;
@@ -40,6 +41,7 @@ public class IsolatedRuntime : IDisposable
         _instantiateDotNetClass = exports.InstantiateDotNetClass;
         _lookupDotNetMethod = exports.LookupDotNetMethod;
         _deserializeAsDotNetObject = exports.DeserializeAsDotNetObject;
+        _invokeInt32MethodNoArgsPacked = exports.InvokeInt32MethodNoArgsPacked;
         _invokeInt32MethodPacked = exports.InvokeInt32MethodPacked;
         _invokeDotNetMethod = exports.InvokeDotNetMethod;
         _releaseObject = exports.ReleaseObject;
@@ -210,6 +212,15 @@ public class IsolatedRuntime : IDisposable
     }
 
     // Internal because you only need to call it via DotNetMethod
+    internal int InvokeInt32Method(int monoMethodPtr, IsolatedObject? instance)
+    {
+        var packedResult = unchecked((ulong)_invokeInt32MethodNoArgsPacked(
+            instance is null ? 0 : instance.GuestGCHandle,
+            monoMethodPtr));
+
+        return UnpackInt32MethodResult(packedResult);
+    }
+
     internal int InvokeInt32Method(int monoMethodPtr, IsolatedObject? instance, int arg0)
     {
         var packedResult = unchecked((ulong)_invokeInt32MethodPacked(
@@ -217,6 +228,11 @@ public class IsolatedRuntime : IDisposable
             monoMethodPtr,
             arg0));
 
+        return UnpackInt32MethodResult(packedResult);
+    }
+
+    private int UnpackInt32MethodResult(ulong packedResult)
+    {
         var errorMessagePtr = (int)(packedResult >> 32);
         if (errorMessagePtr != 0)
         {

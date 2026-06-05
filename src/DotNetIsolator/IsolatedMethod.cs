@@ -17,7 +17,15 @@ public class IsolatedMethod
     }
 
     public TRes Invoke<TRes>(IsolatedObject? instance)
-        => _runtimeInstance.InvokeDotNetMethod<TRes>(_monoMethodPtr, instance, Span<int>.Empty);
+    {
+        if (typeof(TRes) == typeof(int))
+        {
+            var result = _runtimeInstance.InvokeInt32Method(_monoMethodPtr, instance);
+            return (TRes)(object)result;
+        }
+
+        return _runtimeInstance.InvokeDotNetMethod<TRes>(_monoMethodPtr, instance, Span<int>.Empty);
+    }
 
     public TRes Invoke<T0, TRes>(IsolatedObject? instance, T0 param0)
     {
