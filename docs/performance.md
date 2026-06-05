@@ -163,6 +163,10 @@ The following paths were tested and kept:
   written by direct enumeration instead of staging through `Cast().ToArray()`,
   and deserializing non-array collections now fills the destination `List<T>`
   directly instead of first building an array.
+* Bulk primitive collection codec: exact `int[]` and `List<int>` payloads use a
+  compact count-plus-bytes format instead of writing each element through the
+  recursive nullable value path. The host still receives new arrays/lists that
+  are copied out of guest memory.
 * Unlocked warm module-cache hits: warm precompiled-module cache hits now
   deserialize without a process-wide cache lock, while cache misses still
   synchronize per cache file. This improves parallel host construction without
@@ -246,32 +250,32 @@ Representative run with
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 87.999 ms, mean 1.760 ns
-Isolated warm-runtime Increment: total 169.840 ms, mean 169.840 ns
-Isolated warm-runtime public Invoke Increment: total 252.520 ms, mean 252.520 ns
-Isolated/direct mean ratio: 97x
+Direct host Increment: total 88.127 ms, mean 1.763 ns
+Isolated warm-runtime Increment: total 173.202 ms, mean 173.202 ns
+Isolated warm-runtime public Invoke Increment: total 268.454 ms, mean 268.454 ns
+Isolated/direct mean ratio: 98x
 
 Additional warm-call overhead
-Isolated warm-runtime zero-arg int return: total 4.347 ms, mean 217.360 ns
-Isolated warm-runtime generic byte[4096] return: total 7.268 ms, mean 14.537 us
-Isolated warm-runtime generic object return: total 34.241 ms, mean 68.481 us
-Isolated warm-runtime generic List<int>[1024] return: total 314.630 ms, mean 629.260 us
+Isolated warm-runtime zero-arg int return: total 4.376 ms, mean 218.780 ns
+Isolated warm-runtime generic byte[4096] return: total 6.931 ms, mean 13.862 us
+Isolated warm-runtime generic object return: total 35.502 ms, mean 71.004 us
+Isolated warm-runtime generic List<int>[1024] return: total 17.141 ms, mean 34.282 us
 
 Startup medians
-No module cache: host 302.086 ms, runtime 35.749 ms, object 625.500 us, method 172.700 us, first call 58.200 us
-Cold module cache: host 334.794 ms, runtime 44.092 ms, object 746.300 us, method 157.800 us, first call 93.400 us
-Warm module cache: host 1.702 ms, runtime 46.484 ms, object 655.700 us, method 141.800 us, first call 63.400 us
-Warm host: runtime 44.960 ms, object 615.600 us, method 143.900 us, first call 72.300 us
-Runtime memory snapshot preload: 82.182 ms
-Warm runtime memory snapshot: runtime 3.620 ms, object 996.200 us, method 184.600 us, first call 95.000 us
+No module cache: host 303.684 ms, runtime 35.673 ms, object 551.000 us, method 95.100 us, first call 55.400 us
+Cold module cache: host 328.154 ms, runtime 39.470 ms, object 580.900 us, method 115.200 us, first call 83.900 us
+Warm module cache: host 1.603 ms, runtime 54.384 ms, object 596.500 us, method 125.300 us, first call 71.200 us
+Warm host: runtime 39.908 ms, object 657.000 us, method 117.700 us, first call 57.700 us
+Runtime memory snapshot preload: 82.370 ms
+Warm runtime memory snapshot: runtime 3.054 ms, object 627.800 us, method 100.900 us, first call 58.100 us
 
 Concurrent host construction
-Warm module cache parallel host construction (16 hosts): total 15.516 ms, mean 969.731 us
+Warm module cache parallel host construction (16 hosts): total 16.414 ms, mean 1.026 ms
 ```
 
 Interpretation:
 
-* A representative warm isolated scalar call is around `170 ns` on this machine,
+* A representative warm isolated scalar call is around `173 ns` on this machine,
   versus about `1.8 ns` for the direct host call. That is roughly `98x` slower
   for this tiny method.
 * Before the scalar fast path, the same benchmark measured about `37 us` per
@@ -288,8 +292,10 @@ Interpretation:
 * Avoiding the duplicate deserialization copy reduced close A/B samples for the
   4 KiB generic byte-array return from about `14.65 us` to about `13.33 us`.
 * Direct collection serialization reduced close A/B samples for a
-  `List<int>[1024]` return from about `738 us` to about `649-652 us`; the
-  representative run above is about `629 us`.
+  `List<int>[1024]` return from about `738 us` to about `649-652 us`.
+* The bulk primitive collection codec then reduced close A/B samples for the
+  same `List<int>[1024]` return from about `653.8 us` at `HEAD` to about
+  `28.8-29.2 us`; the representative run above is about `34.3 us`.
 * The warm module cache cuts host construction from about `311 ms` to about
   `1.6 ms`, roughly a `198x` improvement for that phase in this run.
 * Unlocking warm module-cache hits reduced close A/B samples for 16 parallel

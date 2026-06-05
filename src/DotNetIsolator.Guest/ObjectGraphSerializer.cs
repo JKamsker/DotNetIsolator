@@ -199,6 +199,11 @@ internal static class ObjectGraphSerializer
 
     private static void WriteCollection(BinaryWriter writer, object value, Type elementType, int depth)
     {
+        if (ObjectGraphPrimitiveCollections.TryWrite(writer, value, elementType))
+        {
+            return;
+        }
+
         if (value is ICollection collection)
         {
             writer.Write(collection.Count);
@@ -221,6 +226,12 @@ internal static class ObjectGraphSerializer
     private static object ReadCollection(BinaryReader reader, Type type, Type elementType, int depth)
     {
         var count = reader.ReadInt32();
+        if (ObjectGraphPrimitiveCollections.TryRead(reader, type, elementType, count, out var primitiveCollection))
+        {
+            return primitiveCollection!;
+        }
+
+        ObjectGraphPrimitiveCollections.EnsureCount(count);
         if (type.IsArray)
         {
             var values = Array.CreateInstance(elementType, count);
