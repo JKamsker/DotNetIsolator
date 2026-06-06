@@ -35,6 +35,46 @@ public sealed class BlittableCollectionInvocationTest : IDisposable
     }
 
     [Fact]
+    public void CanReturnDoubleList()
+    {
+        var returnValue = _runtime.CreateObject<Target>()
+            .Invoke<List<double>>(nameof(Target.DoubleList));
+
+        Assert.Equal(new[] { 1.5, -2.25, double.MaxValue }, returnValue);
+    }
+
+    [Fact]
+    public void CanReturnLongList()
+    {
+        var returnValue = _runtime.CreateObject<Target>()
+            .Invoke<List<long>>(nameof(Target.LongList));
+
+        Assert.Equal(new[] { 0L, long.MaxValue, long.MinValue }, returnValue);
+    }
+
+    [Fact]
+    public void CanReturnEmptyDoubleList()
+    {
+        var returnValue = _runtime.CreateObject<Target>()
+            .Invoke<List<double>>(nameof(Target.EmptyDoubleList));
+
+        Assert.Empty(returnValue);
+    }
+
+    [Fact]
+    public void CanReturnLargeLongListLosslessly()
+    {
+        var returnValue = _runtime.CreateObject<Target>()
+            .Invoke<List<long>>(nameof(Target.LargeLongList));
+
+        Assert.Equal(4096, returnValue.Count);
+        for (var i = 0; i < returnValue.Count; i++)
+        {
+            Assert.Equal((long)i * 1_000_003, returnValue[i]);
+        }
+    }
+
+    [Fact]
     public void CanReturnShortArray()
     {
         var returnValue = _runtime.CreateObject<Target>()
@@ -161,6 +201,26 @@ public sealed class BlittableCollectionInvocationTest : IDisposable
 
         public List<float> FloatList()
             => [0.5f, 1.25f, -3.5f];
+
+        public List<double> DoubleList()
+            => [1.5, -2.25, double.MaxValue];
+
+        public List<long> LongList()
+            => [0L, long.MaxValue, long.MinValue];
+
+        public List<double> EmptyDoubleList()
+            => [];
+
+        public List<long> LargeLongList()
+        {
+            var values = new List<long>(4096);
+            for (var i = 0; i < 4096; i++)
+            {
+                values.Add((long)i * 1_000_003);
+            }
+
+            return values;
+        }
 
         public short[] ShortArray()
             => [-1, 0, 1, short.MaxValue, short.MinValue];

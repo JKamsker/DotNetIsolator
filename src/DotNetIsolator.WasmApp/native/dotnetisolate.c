@@ -539,6 +539,69 @@ static void invoke_blittable_array(MonoGCHandle target, MonoMethod* method_ptr, 
 		: mono_array_addr_with_size(result_array, element_size, 0);
 }
 
+// Zero-copy fast path for exact () -> List<T> methods where T is a blittable primitive. The guest
+// reads the list's backing array (_items) and live count (_size) and returns a pointer to the first
+// count elements, mirroring the array fast path. List<T>'s field layout has been stable for many
+// years; if the expected fields are missing the call fails rather than guessing.
+static void invoke_blittable_list(MonoGCHandle target, MonoMethod* method_ptr, BlittableArrayInvocationResult* result) {
+	result->data = NULL;
+	result->length = 0;
+	result->element_size = 0;
+	result->result_handle = NULL;
+	result->error_msg = NULL;
+
+	MonoObject* exc = NULL;
+	MonoObject* target_object = target ? mono_gchandle_get_target((uint32_t)target) : 0;
+	MonoObject* result_object = mono_runtime_invoke(method_ptr, target_object, NULL, &exc);
+
+	if (exc) {
+		MonoObject* ignored_tostring_exception;
+		result->error_msg = mono_object_to_string(exc, &ignored_tostring_exception);
+		return;
+	}
+
+	if (!result_object) {
+		return; // null list
+	}
+
+	MonoClass* list_class = mono_object_get_class(result_object);
+	MonoClassField* items_field = mono_class_get_field_from_name(list_class, "_items");
+	MonoClassField* size_field = mono_class_get_field_from_name(list_class, "_size");
+	if (!items_field || !size_field) {
+		fail_with_message("The method does not return a List<T> with the expected layout.", &result->error_msg);
+		return;
+	}
+
+	MonoArray* items = NULL;
+	mono_field_get_value(result_object, items_field, &items);
+	int size = 0;
+	mono_field_get_value(result_object, size_field, &size);
+
+	if (size < 0) {
+		fail_with_message("The list result reported a negative count.", &result->error_msg);
+		return;
+	}
+
+	if (!items) {
+		// Empty list with no backing array: report empty and pin the list so the host can tell it
+		// apart from a null list.
+		result->result_handle = (MonoGCHandle)mono_gchandle_new(result_object, /* pinned */ 1);
+		return;
+	}
+
+	MonoClass* element_class = mono_class_get_element_class(mono_object_get_class((MonoObject*)items));
+	int element_size = blittable_element_size(element_class);
+	if (element_size == 0) {
+		fail_with_message("The list element type is not a blittable primitive.", &result->error_msg);
+		return;
+	}
+
+	result->result_handle = (MonoGCHandle)mono_gchandle_new((MonoObject*)items, /* pinned */ 1);
+	result->length = size;
+	result->element_size = element_size;
+	result->data = size == 0 ? NULL : mono_array_addr_with_size(items, element_size, 0);
+}
+
 __attribute__((export_name("dotnetisolator_invoke_i32_i32")))
 int dotnetisolator_invoke_i32_i32(MonoGCHandle target, MonoMethod* method_ptr, int arg0, int* result, MonoString** error_msg) {
 	return invoke_i32_i32(target, method_ptr, arg0, result, error_msg);
@@ -552,6 +615,11 @@ void dotnetisolator_invoke_byte_array(ByteArrayInvocationResult* result, MonoGCH
 __attribute__((export_name("dotnetisolator_invoke_blittable_array")))
 void dotnetisolator_invoke_blittable_array(BlittableArrayInvocationResult* result, MonoGCHandle target, MonoMethod* method_ptr) {
 	invoke_blittable_array(target, method_ptr, result);
+}
+
+__attribute__((export_name("dotnetisolator_invoke_blittable_list")))
+void dotnetisolator_invoke_blittable_list(BlittableArrayInvocationResult* result, MonoGCHandle target, MonoMethod* method_ptr) {
+	invoke_blittable_list(target, method_ptr, result);
 }
 
 // Zero-copy fast path for exact (T[]) -> TRes methods where T is a blittable primitive. The host

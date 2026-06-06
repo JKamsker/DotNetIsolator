@@ -62,6 +62,19 @@ public class IsolatedMethod
         if (typeof(TRes) == typeof(bool[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<bool>(_monoMethodPtr, instance)!; return true; }
         if (typeof(TRes) == typeof(sbyte[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<sbyte>(_monoMethodPtr, instance)!; return true; }
 
+        if (typeof(TRes) == typeof(List<int>)) { result = (TRes)(object)_runtimeInstance.InvokeBlittableListMethod<int>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(List<uint>)) { result = (TRes)(object)_runtimeInstance.InvokeBlittableListMethod<uint>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(List<long>)) { result = (TRes)(object)_runtimeInstance.InvokeBlittableListMethod<long>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(List<ulong>)) { result = (TRes)(object)_runtimeInstance.InvokeBlittableListMethod<ulong>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(List<short>)) { result = (TRes)(object)_runtimeInstance.InvokeBlittableListMethod<short>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(List<ushort>)) { result = (TRes)(object)_runtimeInstance.InvokeBlittableListMethod<ushort>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(List<double>)) { result = (TRes)(object)_runtimeInstance.InvokeBlittableListMethod<double>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(List<float>)) { result = (TRes)(object)_runtimeInstance.InvokeBlittableListMethod<float>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(List<char>)) { result = (TRes)(object)_runtimeInstance.InvokeBlittableListMethod<char>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(List<bool>)) { result = (TRes)(object)_runtimeInstance.InvokeBlittableListMethod<bool>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(List<byte>)) { result = (TRes)(object)_runtimeInstance.InvokeBlittableListMethod<byte>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(List<sbyte>)) { result = (TRes)(object)_runtimeInstance.InvokeBlittableListMethod<sbyte>(_monoMethodPtr, instance)!; return true; }
+
         result = default!;
         return false;
     }

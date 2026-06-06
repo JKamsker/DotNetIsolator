@@ -24,6 +24,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int, int> _invokeVoidMethodInt32;
     private readonly Action<int, int, int> _invokeByteArrayMethod;
     private readonly Action<int, int, int> _invokeBlittableArrayMethod;
+    private readonly Action<int, int, int> _invokeBlittableListMethod;
     private readonly Action<int> _invokeBlittableArrayArgMethod;
     private readonly Action<int> _invokeDotNetMethod;
     private readonly Action<int> _releaseObject;
@@ -70,6 +71,7 @@ public class IsolatedRuntime : IDisposable
         _invokeVoidMethodInt32 = exports.InvokeVoidMethodInt32;
         _invokeByteArrayMethod = exports.InvokeByteArrayMethod;
         _invokeBlittableArrayMethod = exports.InvokeBlittableArrayMethod;
+        _invokeBlittableListMethod = exports.InvokeBlittableListMethod;
         _invokeBlittableArrayArgMethod = exports.InvokeBlittableArrayArgMethod;
         _invokeScalarMethod = exports.InvokeScalarMethod;
         _invokeDotNetMethod = exports.InvokeDotNetMethod;
@@ -364,6 +366,17 @@ public class IsolatedRuntime : IDisposable
     // raw element bytes once into a fresh host array. This bypasses guest-side object-graph
     // serialization entirely, mirroring the existing () -> byte[] fast path.
     internal T[]? InvokeBlittableArrayMethod<T>(int monoMethodPtr, IsolatedObject? instance) where T : unmanaged
+        => InvokeBlittableSequence<T>(_invokeBlittableArrayMethod, monoMethodPtr, instance);
+
+    // Zero-copy fast path for exact () -> List<T> methods where T is a blittable primitive. The guest
+    // returns a pointer to the list's backing-array storage for its live element count.
+    internal List<T>? InvokeBlittableListMethod<T>(int monoMethodPtr, IsolatedObject? instance) where T : unmanaged
+    {
+        var values = InvokeBlittableSequence<T>(_invokeBlittableListMethod, monoMethodPtr, instance);
+        return values is null ? null : new List<T>(values);
+    }
+
+    private T[]? InvokeBlittableSequence<T>(Action<int, int, int> invokeExport, int monoMethodPtr, IsolatedObject? instance) where T : unmanaged
     {
         var len = Marshal.SizeOf<BlittableArrayInvocationResult>();
         var wasmPtr = _shadowStack.PushFrame(len);
@@ -373,7 +386,7 @@ public class IsolatedRuntime : IDisposable
             ref var result = ref MemoryMarshal.AsRef<BlittableArrayInvocationResult>(resultStruct);
             result = default;
 
-            _invokeBlittableArrayMethod(
+            invokeExport(
                 wasmPtr,
                 instance is null ? 0 : instance.GuestGCHandle,
                 monoMethodPtr);
@@ -390,15 +403,15 @@ public class IsolatedRuntime : IDisposable
 
             try
             {
-                if (result.ElementSize != Unsafe.SizeOf<T>())
-                {
-                    throw new IsolatedException(
-                        $"The guest returned {result.ElementSize}-byte array elements but {Unsafe.SizeOf<T>()}-byte elements were expected.");
-                }
-
                 if (result.Length == 0)
                 {
                     return Array.Empty<T>();
+                }
+
+                if (result.ElementSize != Unsafe.SizeOf<T>())
+                {
+                    throw new IsolatedException(
+                        $"The guest returned {result.ElementSize}-byte elements but {Unsafe.SizeOf<T>()}-byte elements were expected.");
                 }
 
                 var values = new T[result.Length];

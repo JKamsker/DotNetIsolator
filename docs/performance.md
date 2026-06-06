@@ -188,6 +188,14 @@ The following paths were tested and kept:
   generalizes the `() -> byte[]` fast path and removes the guest-side
   serializer invocation, the guest `MemoryStream`/`ToArray`, and the redundant
   large-buffer copies for the common array-return case.
+* Native blittable-list return path: `IsolatedMethod.Invoke<List<T>>` for any
+  blittable primitive element type returns a pointer to the list's backing array
+  (`_items`) for its live element count (`_size`), read through mono metadata,
+  and the host copies the elements once into a new `List<T>`. This bypasses the
+  managed serialize/deserialize round-trip for the common `() -> List<T>` shape,
+  reusing the array fast path's result transport. `List<T>`'s field layout has
+  been stable for many years; if the expected fields are absent the call fails
+  rather than guessing.
 * Native blittable-array argument path: `IsolatedMethod.Invoke<T[], TRes>` for
   any blittable primitive element type sends the raw element bytes into a guest
   buffer once, and the guest materializes the managed array directly with
@@ -410,6 +418,12 @@ Interpretation:
   same `List<int>[1024]` return from about `20.3 us` at `HEAD` to about
   `8.1 us`, and the generic object return from about `11.0 us` to about
   `8.9 us`, using a payload-heavy close comparison.
+* The native blittable-list return path then took the `List<int>[1024]` return
+  from the managed bulk-codec path at about `16 us` to about `2.7-2.9 us` (about
+  `6x`), close to the native array return, by reading the list's backing array
+  directly and skipping the managed serialize/deserialize round-trip. It applies
+  to `List<T>` of any blittable primitive element type. General object/record
+  returns still use the managed object-graph path.
 * Generalizing the bulk primitive collection codec to every blittable element
   type removed the per-element catastrophe for wide arrays. With a `32768`
   element payload and `--payload-iterations 30`, a `double[]` return dropped from

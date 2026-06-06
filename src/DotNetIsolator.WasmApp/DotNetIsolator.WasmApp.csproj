@@ -39,6 +39,7 @@
 		<LinkerArg Include="-Wl,--export=dotnetisolator_instantiate_class" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_byte_array" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_blittable_array" />
+		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_blittable_list" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_blittable_array_arg" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_i32_packed" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_i32_i32" />
