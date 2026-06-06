@@ -29,11 +29,70 @@ public static class DotNetIsolatorHost
 
     public static unsafe T Invoke<T>(string callbackName, params object[] args)
     {
+        // Lean fast path: a callback whose single argument (if any) and result are blittable
+        // primitives travels bit-packed in registers, skipping the MessagePack envelope and the
+        // object-graph (de)serialization on both sides.
+        if (TryInvokeScalar<T>(callbackName, args, out var scalarResult))
+        {
+            return scalarResult;
+        }
+
         // Note that this overload won't work if the host is AOT compiled because it will be unable to
         // deserialize these arbitrary arg types. For that scenario, use the Memory<byte>[] overload instead.
         return PerformCall<T>(
             CreateCall(callbackName, SerializeArgs(args), isRawCall: false),
             readResult: true);
+    }
+
+    private static unsafe bool TryInvokeScalar<T>(string callbackName, object[] args, out T result)
+    {
+        var resultKind = PrimitiveScalarCodec.GetKind(typeof(T));
+        if (resultKind == PrimitiveScalarCodec.None || args.Length > 1)
+        {
+            result = default!;
+            return false;
+        }
+
+        long argBits = 0;
+        var argKind = PrimitiveScalarCodec.None;
+        if (args.Length == 1)
+        {
+            if (args[0] is null)
+            {
+                result = default!;
+                return false;
+            }
+
+            argKind = PrimitiveScalarCodec.GetKind(args[0].GetType());
+            if (argKind == PrimitiveScalarCodec.None)
+            {
+                result = default!;
+                return false;
+            }
+
+            argBits = PrimitiveScalarCodec.Pack(args[0], argKind);
+        }
+
+        var invocation = new ScalarCallInvocation
+        {
+            ArgBits = argBits,
+            ArgKind = argKind,
+            ResultKind = resultKind,
+        };
+
+        var nameBytes = Encoding.UTF8.GetBytes(callbackName);
+        fixed (byte* namePtr = nameBytes)
+        {
+            Interop.CallHostScalar(namePtr, nameBytes.Length, &invocation);
+        }
+
+        if (invocation.Error != 0)
+        {
+            throw new InvalidOperationException("Call to host failed: The call failed. See host console logs for details.");
+        }
+
+        result = (T)PrimitiveScalarCodec.Unpack(invocation.ResultBits, resultKind);
+        return true;
     }
 
     private static byte[]?[] SerializeArgs(object[] args)

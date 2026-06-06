@@ -1,4 +1,6 @@
-﻿using System.Collections.Concurrent;
+﻿using DotNetIsolator.Internal;
+using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using Wasmtime;
 
 namespace DotNetIsolator;
@@ -291,6 +293,27 @@ public class IsolatedRuntimeHost : IDisposable
     {
         Linker.DefineFunction("dotnetisolator", "request_assembly", (CallerFunc<int, int, int, int, int>)HandleRequestAssembly);
         Linker.DefineFunction("dotnetisolator", "call_host", (CallerFunc<int, int, int, int, int>)HandleCallHost);
+        Linker.DefineFunction("dotnetisolator", "call_host_scalar", (CallerAction<int, int, int>)HandleCallHostScalar);
+    }
+
+    private void HandleCallHostScalar(Caller caller, int namePtr, int nameLen, int invocationPtr)
+    {
+        var memory = caller.GetMemory("memory") ?? throw new InvalidOperationException("Caller lacks required export 'memory'");
+        var span = memory.GetSpan(invocationPtr, Marshal.SizeOf<ScalarCallInvocation>());
+        ref var invocation = ref MemoryMarshal.AsRef<ScalarCallInvocation>(span);
+        invocation.Error = 0;
+        try
+        {
+            var runtime = IsolatedRuntime.FromStore(caller.Store);
+            var name = memory.ReadString(namePtr, nameLen);
+            invocation.ResultBits = runtime.InvokeScalarCallback(name, invocation.ArgBits, invocation.ArgKind, invocation.ResultKind);
+        }
+        catch (Exception ex)
+        {
+            // Mirror the opaque failure behavior of the general callback path: don't leak host detail.
+            Console.Error.WriteLine(ex.ToString());
+            invocation.Error = 1;
+        }
     }
 
     private int HandleRequestAssembly(Caller caller, int assemblyNamePtr, int assemblyNameLen, int suppliedBytesPtr, int suppliedBytesLen)

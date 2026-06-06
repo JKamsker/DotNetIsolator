@@ -259,6 +259,13 @@ The following paths were tested and kept:
   return type metadata, raw `byte[]` callbacks use the deserialized host-owned
   argument arrays directly instead of cloning them again, and guest callback
   result buffers are freed after the guest copies or deserializes them.
+* Scalar callback fast path: `DotNetIsolatorHost.Invoke<TRes>(name, arg)` for a
+  callback whose single argument (if any) and result are blittable primitives
+  travels bit-packed through a small invocation struct in guest memory via a
+  dedicated `call_host_scalar` host import, skipping the MessagePack envelope and
+  the object-graph (de)serialization on both sides. Other callback shapes keep
+  using the general MessagePack path. It reduced the typed `(int) -> int`
+  callback from about `9.5 us` to about `1.9 us` (about `5x`).
 
 ### Rejected
 

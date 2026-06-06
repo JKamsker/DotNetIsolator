@@ -48,6 +48,23 @@ internal sealed class HostCallbackRegistry
         }
     }
 
+    public long InvokeScalar(string callbackName, long argBits, int argKind, int resultKind)
+    {
+        if (!_callbacks.TryGetValue(callbackName, out var callback))
+        {
+            throw new InvalidOperationException($"There is no registered callback with name '{callbackName}'");
+        }
+
+        var args = argKind == PrimitiveScalarCodec.None
+            ? Array.Empty<object?>()
+            : new[] { PrimitiveScalarCodec.Unpack(argBits, argKind) };
+
+        var result = callback.Delegate.DynamicInvoke(args)
+            ?? throw new InvalidOperationException("The scalar callback returned null.");
+
+        return PrimitiveScalarCodec.Pack(result, resultKind);
+    }
+
     private static object?[] DeserializeArguments(Type[] parameterTypes, GuestToHostCall invocationInfo)
     {
         var deserializedArgs = new object?[parameterTypes.Length];

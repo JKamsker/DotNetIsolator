@@ -637,6 +637,9 @@ public class IsolatedRuntime : IDisposable
         return wasmMethod;
     }
 
+    internal long InvokeScalarCallback(string name, long argBits, int argKind, int resultKind)
+        => _callbacks.InvokeScalar(name, argBits, argKind, resultKind);
+
     internal int AcceptCallFromGuest(int invocationPtr, int invocationLength, int resultPtrPtr, int resultLengthPtr)
     {
         var response = _callbacks.Invoke(_memory.GetSpan<byte>(invocationPtr, invocationLength));
