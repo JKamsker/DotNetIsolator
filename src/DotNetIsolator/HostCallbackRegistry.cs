@@ -21,12 +21,13 @@ internal sealed class HostCallbackRegistry
         _callbacks.Add(name, RegisteredCallback.Create(callback));
     }
 
-    public HostCallbackResponse Invoke(ReadOnlySpan<byte> invocationBytes)
+    public HostCallbackResponse Invoke(ReadOnlyMemory<byte> invocationBytes)
     {
         try
         {
+            // Deserialize directly from guest memory; the envelope bytes are not needed afterwards.
             var invocationInfo = MessagePackSerializer.Deserialize<GuestToHostCall>(
-                invocationBytes.ToArray(),
+                invocationBytes,
                 MessagePackCompatibility.GuestToHostCallOptions);
 
             if (!_callbacks.TryGetValue(invocationInfo.CallbackName, out var callback))

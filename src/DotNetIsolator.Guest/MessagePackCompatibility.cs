@@ -26,6 +26,9 @@ internal static class MessagePackCompatibility
     public static T? DeserializeObject<T>(ReadOnlyMemory<byte> value)
         => (T?)ObjectGraphSerializer.Deserialize(typeof(T), value);
 
+    public static T? DeserializeObject<T>(Stream stream)
+        => (T?)ObjectGraphSerializer.Deserialize(typeof(T), stream);
+
     public static object? DeserializeObject(Type declaredType, ReadOnlyMemory<byte> value)
         => ObjectGraphSerializer.Deserialize(declaredType, value);
 

@@ -602,13 +602,19 @@ public class IsolatedRuntime : IDisposable
             }
             else
             {
-                var resultBytes = _memory
-                    .GetSpan(invocation.ResultSerialized, invocation.ResultSerializedLength)
-                    .ToArray();
-
-                // The host deserializes using the expected result type instead of trusting guest-provided
-                // top-level type metadata.
-                var result = MessagePackCompatibility.DeserializeObject<TRes>(resultBytes)!;
+                // Deserialize directly from guest memory instead of copying the payload into a host
+                // array first. The host deserializes using the expected result type rather than
+                // trusting guest-provided top-level type metadata.
+                var resultSpan = _memory.GetSpan(invocation.ResultSerialized, invocation.ResultSerializedLength);
+                TRes result;
+                unsafe
+                {
+                    fixed (byte* resultPtr = resultSpan)
+                    {
+                        using var resultStream = new UnmanagedMemoryStream(resultPtr, resultSpan.Length);
+                        result = MessagePackCompatibility.DeserializeObject<TRes>(resultStream)!;
+                    }
+                }
 
                 ReleaseGCHandle(invocation.ResultSerializedGCHandle);
                 return result;
@@ -711,7 +717,17 @@ public class IsolatedRuntime : IDisposable
 
     internal int AcceptCallFromGuest(int invocationPtr, int invocationLength, int resultPtrPtr, int resultLengthPtr)
     {
-        var response = _callbacks.Invoke(_memory.GetSpan<byte>(invocationPtr, invocationLength));
+        var invocationSpan = _memory.GetSpan<byte>(invocationPtr, invocationLength);
+        HostCallbackResponse response;
+        unsafe
+        {
+            fixed (byte* invocationFixed = invocationSpan)
+            {
+                using var manager = new UnmanagedMemoryManager(invocationFixed, invocationLength);
+                response = _callbacks.Invoke(manager.Memory);
+            }
+        }
+
         var resultBytes = response.ResultBytes;
         var resultPtr = resultBytes is null ? 0 : CopyValue<byte>(resultBytes, false);
         _memory.WriteInt32(resultPtrPtr, resultPtr);

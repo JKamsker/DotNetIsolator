@@ -10,11 +10,17 @@ internal static class ObjectGraphSerializer
     private const int MaxDepth = 128;
     private static readonly Encoding Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
+    // Serialization is synchronous and non-reentrant on a given thread, so reuse one writer per
+    // thread to avoid allocating a MemoryStream + BinaryWriter and regrowing the buffer on every
+    // call. The guest is single-threaded; the host gets one writer per worker thread.
+    [ThreadStatic] private static MemoryStream? _writeStream;
+    [ThreadStatic] private static BinaryWriter? _writeWriter;
+
     public static byte[] SerializeWithType(object? value)
     {
-        using var stream = new MemoryStream();
-        using var writer = new BinaryWriter(stream, Encoding);
+        var (stream, writer) = GetThreadWriter();
         WriteTypedValue(writer, value, depth: 0);
+        writer.Flush();
         return stream.ToArray();
     }
 
@@ -33,16 +39,36 @@ internal static class ObjectGraphSerializer
 
     public static byte[] Serialize(Type declaredType, object? value)
     {
-        using var stream = new MemoryStream();
-        using var writer = new BinaryWriter(stream, Encoding);
+        var (stream, writer) = GetThreadWriter();
         WriteValue(writer, declaredType, value, depth: 0);
+        writer.Flush();
         return stream.ToArray();
+    }
+
+    private static (MemoryStream Stream, BinaryWriter Writer) GetThreadWriter()
+    {
+        var stream = _writeStream;
+        if (stream is null)
+        {
+            stream = new MemoryStream(256);
+            _writeStream = stream;
+            _writeWriter = new BinaryWriter(stream, Encoding);
+        }
+
+        stream.SetLength(0);
+        return (stream, _writeWriter!);
     }
 
     public static object? Deserialize(Type declaredType, ReadOnlyMemory<byte> value)
     {
         using var stream = CreateReadStream(value);
         using var reader = new BinaryReader(stream, Encoding);
+        return ReadValue(reader, declaredType, depth: 0);
+    }
+
+    public static object? Deserialize(Type declaredType, Stream stream)
+    {
+        using var reader = new BinaryReader(stream, Encoding, leaveOpen: true);
         return ReadValue(reader, declaredType, depth: 0);
     }
 

@@ -4,6 +4,7 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<WasmAppProjectName>DotNetIsolator.WasmApp</WasmAppProjectName>
 		<WasmAppRuntimeIdentifier>wasi-wasm</WasmAppRuntimeIdentifier>
 		<BundledFilesDir>IsolatedRuntimeHost\</BundledFilesDir>

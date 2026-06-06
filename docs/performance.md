@@ -281,6 +281,15 @@ The following paths were tested and kept:
   the object-graph (de)serialization on both sides. Other callback shapes keep
   using the general MessagePack path. It reduced the typed `(int) -> int`
   callback from about `9.5 us` to about `1.9 us` (about `5x`).
+* Copy-free generic deserialization: the host now deserializes a generic call's
+  result, and a guest callback's invocation envelope, directly from guest linear
+  memory (via `UnmanagedMemoryStream` and an `UnmanagedMemoryManager`) instead of
+  first copying the payload into a managed array. The object-graph serializer
+  also reuses one `MemoryStream`/`BinaryWriter` per thread instead of allocating
+  and regrowing a buffer on every serialize. These remove per-call allocations on
+  the generic fallback paths (the native fast paths already avoid them for the
+  common shapes). Eliminating the envelope copy reduced the raw `byte[65536]`
+  host callback from about `93 us` to about `73 us` (about `15-20%`).
 * Batched primitive scalar invocation: `IsolatedMethod.InvokeBatch<T0, TRes>`
   runs a primitive `(T0) -> TRes` method once per argument in a single
   host/guest boundary crossing, reading the arguments from one contiguous guest
