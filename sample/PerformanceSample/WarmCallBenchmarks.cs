@@ -76,6 +76,58 @@ internal static class WarmCallBenchmarks
         return new Measurement("Isolated warm-runtime public Invoke Increment", options.IsolatedIterations, elapsed);
     }
 
+    public static Measurement MeasureIsolatedDoubleScalarCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.IncrementDouble), 1);
+
+        var sum = 0.0;
+        for (var i = 0; i < 10; i++)
+        {
+            sum += method.Invoke<double, double>(target, i);
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.IsolatedIterations; i++)
+            {
+                sum += method.Invoke<double, double>(target, i);
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume((long)sum);
+        return new Measurement("Isolated warm-runtime double scalar call", options.IsolatedIterations, elapsed);
+    }
+
+    public static Measurement MeasureIsolatedLongScalarCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.IncrementLong), 1);
+
+        long sum = 0;
+        for (var i = 0; i < 10; i++)
+        {
+            sum += method.Invoke<long, long>(target, i);
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.IsolatedIterations; i++)
+            {
+                sum += method.Invoke<long, long>(target, i);
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume(sum);
+        return new Measurement("Isolated warm-runtime long scalar call", options.IsolatedIterations, elapsed);
+    }
+
     public static Measurement MeasureIsolatedZeroArgIntCalls(BenchmarkOptions options, bool useModuleCache)
     {
         using var host = CreateHost(options, useModuleCache);

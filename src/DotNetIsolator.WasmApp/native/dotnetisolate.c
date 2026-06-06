@@ -210,6 +210,37 @@ MonoClass* element_class_for_kind(int kind) {
 	}
 }
 
+// Returns the byte size for an element-kind tag.
+int kind_size(int kind) {
+	switch (kind) {
+		case 1: case 2: case 3: return 1;
+		case 4: case 5: case 6: return 2;
+		case 7: case 8: case 11: return 4;
+		case 9: case 10: case 12: return 8;
+		default: return 0;
+	}
+}
+
+// Returns 1 if the MonoType is exactly the primitive identified by the element-kind tag.
+int mono_type_matches_kind(MonoType* type, int kind) {
+	int mt = mono_type_get_type(type);
+	switch (kind) {
+		case 1: return mt == MONO_TYPE_BOOLEAN;
+		case 2: return mt == MONO_TYPE_I1;
+		case 3: return mt == MONO_TYPE_U1;
+		case 4: return mt == MONO_TYPE_I2;
+		case 5: return mt == MONO_TYPE_U2;
+		case 6: return mt == MONO_TYPE_CHAR;
+		case 7: return mt == MONO_TYPE_I4;
+		case 8: return mt == MONO_TYPE_U4;
+		case 9: return mt == MONO_TYPE_I8;
+		case 10: return mt == MONO_TYPE_U8;
+		case 11: return mt == MONO_TYPE_R4;
+		case 12: return mt == MONO_TYPE_R8;
+		default: return 0;
+	}
+}
+
 // Returns the element size for a () -> blittable[] method, or 0 if the signature does not match.
 int blittable_array_return_element_size(MonoMethod* method) {
 	MonoMethodSignature* signature = mono_method_signature(method);
@@ -587,6 +618,64 @@ uint64_t dotnetisolator_invoke_i32_i32_packed(MonoGCHandle target, MonoMethod* m
 	}
 
 	return (uint32_t)result;
+}
+
+// General primitive scalar fast path. Handles any (T) -> TRes or () -> TRes method where the
+// argument and result are blittable primitives, identified by element-kind tags shared with the
+// host. The argument is delivered bit-packed in arg_bits (arg_kind == 0 means no argument) and the
+// result is returned bit-packed. The signature is validated against the requested kinds so a
+// mismatched call cannot reinterpret memory. Errors are reported through *error_msg.
+__attribute__((export_name("dotnetisolator_invoke_scalar")))
+uint64_t dotnetisolator_invoke_scalar(MonoGCHandle target, MonoMethod* method_ptr, uint64_t arg_bits, int arg_kind, int result_kind, MonoString** error_msg) {
+	*error_msg = NULL;
+
+	MonoMethodSignature* signature = mono_method_signature(method_ptr);
+	int expected_params = arg_kind == 0 ? 0 : 1;
+	if ((int)mono_signature_get_param_count(signature) != expected_params) {
+		*error_msg = mono_string_new_wrapper("The method does not match the requested scalar signature (parameter count).");
+		return 0;
+	}
+
+	if (arg_kind != 0) {
+		void* iterator = NULL;
+		MonoType* parameter_type = mono_signature_get_params(signature, &iterator);
+		if (!mono_type_matches_kind(parameter_type, arg_kind)) {
+			*error_msg = mono_string_new_wrapper("The method does not match the requested scalar argument type.");
+			return 0;
+		}
+	}
+
+	MonoType* return_type = mono_signature_get_return_type(signature);
+	if (!mono_type_matches_kind(return_type, result_kind)) {
+		*error_msg = mono_string_new_wrapper("The method does not match the requested scalar return type.");
+		return 0;
+	}
+
+	void* method_params[1];
+	void** method_params_ptr = NULL;
+	if (arg_kind != 0) {
+		method_params[0] = &arg_bits;
+		method_params_ptr = method_params;
+	}
+
+	MonoObject* exc = NULL;
+	MonoObject* target_object = target ? mono_gchandle_get_target((uint32_t)target) : 0;
+	MonoObject* result_object = mono_runtime_invoke(method_ptr, target_object, method_params_ptr, &exc);
+
+	if (exc) {
+		MonoObject* ignored_tostring_exception;
+		*error_msg = mono_object_to_string(exc, &ignored_tostring_exception);
+		return 0;
+	}
+
+	if (!result_object) {
+		*error_msg = mono_string_new_wrapper("The scalar method returned null instead of a value type.");
+		return 0;
+	}
+
+	uint64_t result_bits = 0;
+	memcpy(&result_bits, mono_object_unbox(result_object), kind_size(result_kind));
+	return result_bits;
 }
 
 __attribute__((export_name("dotnetisolator_invoke_void")))

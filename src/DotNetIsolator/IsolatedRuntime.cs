@@ -17,6 +17,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int, int, int> _instantiateDotNetClass;
     private readonly Func<int, int, int, int, int, int, int> _lookupDotNetMethod;
     private readonly Func<int, int, int> _deserializeAsDotNetObject;
+    private readonly Func<int, int, long, int, int, int, long> _invokeScalarMethod;
     private readonly Func<int, int, long> _invokeInt32MethodNoArgsPacked;
     private readonly Func<int, int, int, long> _invokeInt32MethodPacked;
     private readonly Func<int, int, int> _invokeVoidMethod;
@@ -53,6 +54,7 @@ public class IsolatedRuntime : IDisposable
         _invokeByteArrayMethod = exports.InvokeByteArrayMethod;
         _invokeBlittableArrayMethod = exports.InvokeBlittableArrayMethod;
         _invokeBlittableArrayArgMethod = exports.InvokeBlittableArrayArgMethod;
+        _invokeScalarMethod = exports.InvokeScalarMethod;
         _invokeDotNetMethod = exports.InvokeDotNetMethod;
         _releaseObject = exports.ReleaseObject;
 
@@ -239,6 +241,35 @@ public class IsolatedRuntime : IDisposable
             arg0));
 
         return UnpackInt32MethodResult(packedResult);
+    }
+
+    // General primitive scalar fast path. The argument is bit-packed into argBits (argKind 0 means
+    // no argument) and the result is returned bit-packed. The guest validates the signature against
+    // the requested kinds. Errors are reported through a shadow-stack error slot.
+    internal long InvokeScalarMethod(int monoMethodPtr, IsolatedObject? instance, long argBits, int argKind, int resultKind)
+    {
+        var errorParam = _shadowStack.Push<int>();
+        try
+        {
+            var resultBits = _invokeScalarMethod(
+                instance is null ? 0 : instance.GuestGCHandle,
+                monoMethodPtr,
+                argBits,
+                argKind,
+                resultKind,
+                errorParam.Address);
+
+            if (errorParam.Value != 0)
+            {
+                throw new IsolatedException(ReadDotNetString(errorParam.Value) ?? "The method call failed.");
+            }
+
+            return resultBits;
+        }
+        finally
+        {
+            errorParam.Pop();
+        }
     }
 
     internal void InvokeVoidMethod(int monoMethodPtr, IsolatedObject? instance)

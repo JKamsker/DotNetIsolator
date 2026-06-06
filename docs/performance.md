@@ -28,6 +28,8 @@ The sample measures:
   method lookup already created. This uses the scalar `int -> int` fast path.
 * an isolated warm-runtime public `IsolatedObject.Invoke` call to the same
   method, including the public method lookup path.
+* isolated warm-runtime `double -> double` and `long -> long` scalar calls that
+  exercise the general primitive scalar fast path
 * an isolated warm-runtime zero-argument `int` return call that uses the scalar
   result fast path
 * isolated warm-runtime `void` calls that use the exact-signature native void
@@ -149,6 +151,16 @@ The following paths were tested and kept:
 * Native zero-argument `int` return path: `IsolatedMethod.Invoke<int>` bypasses
   result serialization for exact `() -> int` methods while keeping native
   signature validation.
+* General primitive scalar path: a single `dotnetisolator_invoke_scalar` export
+  handles any `(T0) -> TRes` or `() -> TRes` call where the argument and result
+  are blittable primitives (`bool`, `sbyte`, `byte`, `short`, `ushort`, `char`,
+  `int`, `uint`, `long`, `ulong`, `float`, `double`). The argument is delivered
+  bit-packed in a register and the result is returned bit-packed, so no guest
+  memory is touched for the value on the success path. The guest validates the
+  method signature against the requested element kinds, so a mismatched request
+  fails instead of reinterpreting bits. This extends the `int`-only scalar fast
+  path to every primitive combination (the dedicated `int -> int` packed path is
+  retained as the fastest case).
 * Native zero-argument `byte[]` return path: `IsolatedMethod.Invoke<byte[]>`
   bypasses object-graph serialization for exact `() -> byte[]` methods. The
   guest array is pinned only while the host copies the bytes into a new host
@@ -351,6 +363,13 @@ Interpretation:
   isolated call and about `21,000x` direct-call overhead on this machine. The
   fast path, shadow-stack frame optimization, and packed scalar return cut the
   measured isolated call cost by roughly `214x`.
+* The general primitive scalar path extended that win to every primitive
+  combination. Before it, a `double -> double` call fell through to the generic
+  object-graph path at about `37.3 us` and a `long -> long` call at about
+  `38.1 us`. With the fast path both drop to about `308-311 ns` (about `120x`
+  and `124x`), close to the dedicated `int -> int` packed path (about
+  `240-280 ns` in the same runs). The same export also covers non-`int`
+  `() -> TRes` returns such as `() -> double` and `() -> long`.
 * The zero-argument `int` return path now bypasses result serialization for
   exact `() -> int` methods. Before that fast path, nearby samples measured
   about `2.3-2.5 us`; the representative fast-path sample above is about

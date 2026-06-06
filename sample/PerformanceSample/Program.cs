@@ -38,6 +38,8 @@ internal static class Program
         var hostResult = WarmCallBenchmarks.MeasureDirectHost(target, options.HostIterations);
         var isolatedResult = WarmCallBenchmarks.MeasureIsolatedCalls(options, useModuleCache: true);
         var publicInvokeResult = WarmCallBenchmarks.MeasureIsolatedPublicInvokeCalls(options, useModuleCache: true);
+        var doubleScalarResult = WarmCallBenchmarks.MeasureIsolatedDoubleScalarCalls(options, useModuleCache: true);
+        var longScalarResult = WarmCallBenchmarks.MeasureIsolatedLongScalarCalls(options, useModuleCache: true);
         var zeroArgResult = WarmCallBenchmarks.MeasureIsolatedZeroArgIntCalls(options, useModuleCache: true);
         var voidResult = WarmCallBenchmarks.MeasureIsolatedVoidCalls(options, useModuleCache: true);
         var intVoidResult = WarmCallBenchmarks.MeasureIsolatedIntVoidCalls(options, useModuleCache: true);
@@ -79,6 +81,8 @@ internal static class Program
 
         Console.WriteLine();
         Console.WriteLine("Additional warm-call overhead");
+        PrintResult(doubleScalarResult);
+        PrintResult(longScalarResult);
         PrintResult(zeroArgResult);
         PrintResult(voidResult);
         PrintResult(intVoidResult);

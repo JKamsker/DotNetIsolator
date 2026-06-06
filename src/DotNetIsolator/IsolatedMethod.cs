@@ -35,6 +35,13 @@ public class IsolatedMethod
             return blittableArray;
         }
 
+        // Non-int primitive () -> TRes returns (int uses the dedicated packed path above).
+        if (TryGetScalarKind<TRes>(out var resultKind))
+        {
+            var resultBits = _runtimeInstance.InvokeScalarMethod(_monoMethodPtr, instance, 0, 0, resultKind);
+            return UnpackScalarResult<TRes>(resultBits);
+        }
+
         return _runtimeInstance.InvokeDotNetMethod<TRes>(_monoMethodPtr, instance, Span<int>.Empty);
     }
 
@@ -97,6 +104,63 @@ public class IsolatedMethod
         return true;
     }
 
+    // Bit-packs a primitive scalar argument into a 64-bit register and reports its element kind.
+    private static bool TryPackScalarArg<T0>(T0 value, out long bits, out int kind)
+    {
+        if (typeof(T0) == typeof(int)) { bits = (uint)(int)(object)value!; kind = KindInt32; return true; }
+        if (typeof(T0) == typeof(uint)) { bits = (uint)(object)value!; kind = KindUInt32; return true; }
+        if (typeof(T0) == typeof(long)) { bits = (long)(object)value!; kind = KindInt64; return true; }
+        if (typeof(T0) == typeof(ulong)) { bits = unchecked((long)(ulong)(object)value!); kind = KindUInt64; return true; }
+        if (typeof(T0) == typeof(short)) { bits = (ushort)(short)(object)value!; kind = KindInt16; return true; }
+        if (typeof(T0) == typeof(ushort)) { bits = (ushort)(object)value!; kind = KindUInt16; return true; }
+        if (typeof(T0) == typeof(byte)) { bits = (byte)(object)value!; kind = KindByte; return true; }
+        if (typeof(T0) == typeof(sbyte)) { bits = (byte)(sbyte)(object)value!; kind = KindSByte; return true; }
+        if (typeof(T0) == typeof(bool)) { bits = (bool)(object)value! ? 1L : 0L; kind = KindBoolean; return true; }
+        if (typeof(T0) == typeof(char)) { bits = (char)(object)value!; kind = KindChar; return true; }
+        if (typeof(T0) == typeof(float)) { bits = BitConverter.SingleToUInt32Bits((float)(object)value!); kind = KindSingle; return true; }
+        if (typeof(T0) == typeof(double)) { bits = BitConverter.DoubleToInt64Bits((double)(object)value!); kind = KindDouble; return true; }
+        bits = 0;
+        kind = 0;
+        return false;
+    }
+
+    // Reports the element kind for a primitive scalar type, or false if it is not a primitive scalar.
+    private static bool TryGetScalarKind<T>(out int kind)
+    {
+        kind = typeof(T) == typeof(int) ? KindInt32
+            : typeof(T) == typeof(uint) ? KindUInt32
+            : typeof(T) == typeof(long) ? KindInt64
+            : typeof(T) == typeof(ulong) ? KindUInt64
+            : typeof(T) == typeof(short) ? KindInt16
+            : typeof(T) == typeof(ushort) ? KindUInt16
+            : typeof(T) == typeof(byte) ? KindByte
+            : typeof(T) == typeof(sbyte) ? KindSByte
+            : typeof(T) == typeof(bool) ? KindBoolean
+            : typeof(T) == typeof(char) ? KindChar
+            : typeof(T) == typeof(float) ? KindSingle
+            : typeof(T) == typeof(double) ? KindDouble
+            : 0;
+        return kind != 0;
+    }
+
+    // Reconstructs a primitive scalar result from its bit-packed register form.
+    private static TRes UnpackScalarResult<TRes>(long bits)
+    {
+        if (typeof(TRes) == typeof(int)) return (TRes)(object)(int)bits;
+        if (typeof(TRes) == typeof(uint)) return (TRes)(object)(uint)bits;
+        if (typeof(TRes) == typeof(long)) return (TRes)(object)bits;
+        if (typeof(TRes) == typeof(ulong)) return (TRes)(object)unchecked((ulong)bits);
+        if (typeof(TRes) == typeof(short)) return (TRes)(object)(short)bits;
+        if (typeof(TRes) == typeof(ushort)) return (TRes)(object)(ushort)bits;
+        if (typeof(TRes) == typeof(byte)) return (TRes)(object)(byte)bits;
+        if (typeof(TRes) == typeof(sbyte)) return (TRes)(object)unchecked((sbyte)bits);
+        if (typeof(TRes) == typeof(bool)) return (TRes)(object)(bits != 0);
+        if (typeof(TRes) == typeof(char)) return (TRes)(object)(char)bits;
+        if (typeof(TRes) == typeof(float)) return (TRes)(object)BitConverter.UInt32BitsToSingle((uint)bits);
+        if (typeof(TRes) == typeof(double)) return (TRes)(object)BitConverter.Int64BitsToDouble(bits);
+        return default!;
+    }
+
     public TRes Invoke<T0, TRes>(IsolatedObject? instance, T0 param0)
     {
         if (typeof(T0) == typeof(int) && typeof(TRes) == typeof(int))
@@ -111,6 +175,13 @@ public class IsolatedMethod
         if (TryInvokeBlittableArrayArg<T0, TRes>(instance, param0, out var arrayArgResult))
         {
             return arrayArgResult;
+        }
+
+        // Any primitive (T0) -> TRes call (int -> int uses the dedicated packed path above).
+        if (TryPackScalarArg(param0, out var argBits, out var argKind) && TryGetScalarKind<TRes>(out var scalarResultKind))
+        {
+            var resultBits = _runtimeInstance.InvokeScalarMethod(_monoMethodPtr, instance, argBits, argKind, scalarResultKind);
+            return UnpackScalarResult<TRes>(resultBits);
         }
 
         // Ideally we'd serialize directly into guest memory but that probably involves implementing

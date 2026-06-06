@@ -24,6 +24,14 @@ public sealed class BenchmarkTarget
         => 42;
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    public double IncrementDouble(double value)
+        => (value * 1.5) + 1.0;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public long IncrementLong(long value)
+        => unchecked((value * 31) + 7);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     public void Noop()
     {
     }
