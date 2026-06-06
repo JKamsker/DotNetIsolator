@@ -1,12 +1,17 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <mono/metadata/appdomain.h>
 #include <mono/metadata/class.h>
 #include <mono/metadata/metadata.h>
 #include <mono/metadata/object.h>
 #include <wasm/driver.h>
+
+// Declared by the mono embedding API but not surfaced in the .NET 10 WASI driver headers.
+MonoCustomAttrInfo* mono_custom_attrs_from_field(MonoClass* klass, MonoClassField* field);
+void mono_custom_attrs_free(MonoCustomAttrInfo* ainfo);
 
 typedef struct RunnerInvocation {
 	MonoGCHandle target;
@@ -315,9 +320,183 @@ void* deserialize_param(void* length_prefixed_buffer, MonoGCHandle* value_handle
 	return must_unbox ? mono_object_unbox(result) : result;
 }
 
+// ---- Native fast path for serializing plain objects whose members are all non-string primitives ----
+#define MAX_SIMPLE_MEMBERS 64
+
+typedef struct SimpleMember {
+	const char* name;
+	MonoClassField* field;
+	int kind;
+} SimpleMember;
+
+// Element kinds the object fast path can write verbatim. char is intentionally excluded: the
+// managed object-graph format writes char (like string) through the text encoding, not as fixed
+// bytes, so char-bearing objects fall back to the managed serializer.
+static int simple_primitive_kind(MonoType* type) {
+	switch (mono_type_get_type(type)) {
+		case MONO_TYPE_BOOLEAN: return 1;
+		case MONO_TYPE_I1: return 2;
+		case MONO_TYPE_U1: return 3;
+		case MONO_TYPE_I2: return 4;
+		case MONO_TYPE_U2: return 5;
+		case MONO_TYPE_I4: return 7;
+		case MONO_TYPE_U4: return 8;
+		case MONO_TYPE_I8: return 9;
+		case MONO_TYPE_U8: return 10;
+		case MONO_TYPE_R4: return 11;
+		case MONO_TYPE_R8: return 12;
+		default: return 0;
+	}
+}
+
+static int simple_member_compare(const void* a, const void* b) {
+	return strcmp(((const SimpleMember*)a)->name, ((const SimpleMember*)b)->name);
+}
+
+static MonoClass* cached_ienumerable_class = NULL;
+
+// Collects the serializable members of klass in the same order as the managed GetSerializableMembers
+// (get/set properties plus non-backing fields, sorted by name), requiring every member to be a
+// non-string primitive. Returns the member count, or -1 to signal "not a simple flat object".
+static int collect_simple_members(MonoClass* klass, SimpleMember* members) {
+	int count = 0;
+
+	void* prop_iter = NULL;
+	MonoProperty* prop;
+	while ((prop = mono_class_get_properties(klass, &prop_iter))) {
+		MonoMethod* getter = mono_property_get_get_method(prop);
+		MonoMethod* setter = mono_property_get_set_method(prop);
+		if (!getter || !setter) {
+			continue;
+		}
+		if (mono_signature_get_param_count(mono_method_signature(getter)) != 0) {
+			continue;
+		}
+
+		const char* pname = mono_property_get_name(prop);
+		char backing[256];
+		snprintf(backing, sizeof(backing), "<%s>k__BackingField", pname);
+		MonoClassField* backing_field = mono_class_get_field_from_name(klass, backing);
+		if (!backing_field) {
+			return -1; // computed property
+		}
+
+		int kind = simple_primitive_kind(mono_field_get_type(backing_field));
+		if (kind == 0 || count >= MAX_SIMPLE_MEMBERS) {
+			return -1;
+		}
+
+		members[count].name = pname;
+		members[count].field = backing_field;
+		members[count].kind = kind;
+		count++;
+	}
+
+	void* field_iter = NULL;
+	MonoClassField* field;
+	while ((field = mono_class_get_fields(klass, &field_iter))) {
+		if (mono_field_get_flags(field) & 0x10) {
+			continue; // static
+		}
+
+		const char* fname = mono_field_get_name(field);
+		if (fname[0] == '<') {
+			int is_collected = 0;
+			for (int i = 0; i < count; i++) {
+				if (members[i].field == field) {
+					is_collected = 1;
+					break;
+				}
+			}
+			if (is_collected) {
+				continue;
+			}
+			return -1; // a backing field the managed path would treat as a plain field; bail
+		}
+
+		MonoCustomAttrInfo* attrs = mono_custom_attrs_from_field(klass, field);
+		if (attrs) {
+			mono_custom_attrs_free(attrs);
+			return -1; // e.g. [NonSerialized]
+		}
+
+		int kind = simple_primitive_kind(mono_field_get_type(field));
+		if (kind == 0 || count >= MAX_SIMPLE_MEMBERS) {
+			return -1;
+		}
+
+		members[count].name = fname;
+		members[count].field = field;
+		members[count].kind = kind;
+		count++;
+	}
+
+	qsort(members, count, sizeof(SimpleMember), simple_member_compare);
+	return count;
+}
+
+// Serializes a plain primitive-only object directly into a managed byte[] matching the object-graph
+// positional format, returning 1 on success or 0 to fall back to the managed serializer.
+static int try_native_serialize_object(MonoObject* value, void** out_data, int* out_length, MonoGCHandle* out_handle) {
+	MonoClass* klass = mono_object_get_class(value);
+	if (mono_class_is_enum(klass)) {
+		return 0;
+	}
+
+	MonoType* klass_type = mono_class_get_type(klass);
+	if (simple_primitive_kind(klass_type) != 0) {
+		return 0; // boxed primitive
+	}
+
+	if (cached_ienumerable_class == NULL) {
+		cached_ienumerable_class = mono_class_from_name(mono_get_corlib(), "System.Collections", "IEnumerable");
+	}
+	if (cached_ienumerable_class != NULL && mono_class_is_assignable_from(cached_ienumerable_class, klass)) {
+		return 0; // strings, arrays, collections
+	}
+
+	SimpleMember members[MAX_SIMPLE_MEMBERS];
+	int count = collect_simple_members(klass, members);
+	if (count < 0) {
+		return 0;
+	}
+
+	int marker = -1;
+	int total = 1 + 4 + 4;
+	for (int i = 0; i < count; i++) {
+		total += 1 + kind_size(members[i].kind);
+	}
+
+	MonoArray* array = mono_array_new(mono_domain_get(), mono_get_byte_class(), total);
+	char* buffer = (char*)mono_array_addr_with_size(array, 1, 0);
+	int offset = 0;
+	buffer[offset++] = 1; // top-level not-null
+	memcpy(buffer + offset, &marker, 4); offset += 4;
+	memcpy(buffer + offset, &count, 4); offset += 4;
+	for (int i = 0; i < count; i++) {
+		buffer[offset++] = 1; // member not-null
+		int member_size = kind_size(members[i].kind);
+		// Read into an aligned scratch, then copy out byte-wise: the wire buffer is byte-packed, so
+		// writing an 8-byte value (e.g. double) directly to an unaligned offset is unreliable.
+		uint64_t scratch = 0;
+		mono_field_get_value(value, members[i].field, &scratch);
+		memcpy(buffer + offset, &scratch, member_size);
+		offset += member_size;
+	}
+
+	*out_handle = (MonoGCHandle)mono_gchandle_new((MonoObject*)array, /* pinned */ 1);
+	*out_data = mono_array_addr_with_size(array, 1, 0);
+	*out_length = total;
+	return 1;
+}
+
 void serialize_value_into(MonoObject* value, void** out_data, int* out_length, MonoGCHandle* out_handle, MonoObject** exception_buf) {
 	if (!value) {
 		*out_data = NULL;
+		return;
+	}
+
+	if (try_native_serialize_object(value, out_data, out_length, out_handle)) {
 		return;
 	}
 

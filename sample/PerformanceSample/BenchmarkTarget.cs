@@ -62,6 +62,17 @@ public sealed class BenchmarkTarget
         => _numbers;
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    public PrimitivePayload ReturnPrimitivePayload()
+        => new()
+        {
+            Id = 42,
+            Ratio = 3.5,
+            Total = 522_240,
+            IsValid = true,
+            Code = 7,
+        };
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     public double[] ReturnDoubles()
         => _doubles;
 
@@ -136,6 +147,19 @@ public sealed class BenchmarkTarget
 
         return values;
     }
+}
+
+public sealed class PrimitivePayload
+{
+    public int Id { get; set; }
+
+    public double Ratio { get; set; }
+
+    public long Total { get; set; }
+
+    public bool IsValid { get; set; }
+
+    public short Code { get; set; }
 }
 
 public sealed class BenchmarkPayload

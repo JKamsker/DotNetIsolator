@@ -287,6 +287,32 @@ internal static class WarmCallBenchmarks
         return new Measurement("Isolated warm-runtime generic object return", options.PayloadIterations, elapsed);
     }
 
+    public static Measurement MeasureIsolatedPrimitiveObjectPayloadCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.ReturnPrimitivePayload), 0);
+
+        long sum = 0;
+        for (var i = 0; i < 3; i++)
+        {
+            sum += method.Invoke<PrimitivePayload>(target).Total;
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.PayloadIterations; i++)
+            {
+                sum += method.Invoke<PrimitivePayload>(target).Total;
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume(sum);
+        return new Measurement("Isolated warm-runtime primitive object return", options.PayloadIterations, elapsed);
+    }
+
     public static Measurement MeasureIsolatedListPayloadCalls(BenchmarkOptions options, bool useModuleCache)
     {
         using var host = CreateHost(options, useModuleCache);

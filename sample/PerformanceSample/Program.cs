@@ -46,6 +46,7 @@ internal static class Program
         var intVoidResult = WarmCallBenchmarks.MeasureIsolatedIntVoidCalls(options, useModuleCache: true);
         var payloadResult = WarmCallBenchmarks.MeasureIsolatedPayloadCalls(options, useModuleCache: true);
         var objectPayloadResult = WarmCallBenchmarks.MeasureIsolatedObjectPayloadCalls(options, useModuleCache: true);
+        var primitiveObjectResult = WarmCallBenchmarks.MeasureIsolatedPrimitiveObjectPayloadCalls(options, useModuleCache: true);
         var listPayloadResult = WarmCallBenchmarks.MeasureIsolatedListPayloadCalls(options, useModuleCache: true);
         var doubleArrayResult = WarmCallBenchmarks.MeasureIsolatedDoubleArrayPayloadCalls(options, useModuleCache: true);
         var longArrayResult = WarmCallBenchmarks.MeasureIsolatedLongArrayPayloadCalls(options, useModuleCache: true);
@@ -91,6 +92,7 @@ internal static class Program
         PrintResult(intVoidResult);
         PrintResult(payloadResult);
         PrintResult(objectPayloadResult);
+        PrintResult(primitiveObjectResult);
         PrintResult(listPayloadResult);
         PrintResult(doubleArrayResult);
         PrintResult(longArrayResult);

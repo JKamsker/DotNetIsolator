@@ -188,6 +188,18 @@ The following paths were tested and kept:
   generalizes the `() -> byte[]` fast path and removes the guest-side
   serializer invocation, the guest `MemoryStream`/`ToArray`, and the redundant
   large-buffer copies for the common array-return case.
+* Native plain-object serializer: the generic invoke path's result serialization
+  first tries a native field-walking serializer for plain objects whose members
+  are all non-`string`, non-`char` primitives (records/structs of numbers). It
+  collects the type's serializable members in the same order as the managed
+  `GetSerializableMembers` (get/set properties plus non-backing instance fields,
+  sorted by name) and writes the positional object-graph format directly with
+  `mono_field_get_value`, skipping the managed serialize round-trip. Anything it
+  cannot prove safe -- `string`/`char` members (which the managed format writes
+  through the text encoding), collections, enums, nesting, `[NonSerialized]` or
+  otherwise attributed members -- falls back to the managed serializer, so the
+  wire format is always identical. A pure-primitive object return dropped from
+  about `20 us` to about `2.5 us` (about `8x`).
 * Native blittable-list return path: `IsolatedMethod.Invoke<List<T>>` for any
   blittable primitive element type returns a pointer to the list's backing array
   (`_items`) for its live element count (`_size`), read through mono metadata,
