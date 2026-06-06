@@ -30,16 +30,33 @@ public class IsolatedRuntime : IDisposable
     private readonly ConcurrentDictionary<(string AssemblyName, string? Namespace, string? DeclaringTypeName, string TypeName, string MethodName, int NumArgs), IsolatedMethod> _methodLookupCache = new();
     private readonly ShadowStack _shadowStack;
     private readonly HostCallbackRegistry _callbacks = new();
+    private readonly IsolatedRuntimeHost _host;
+    private readonly RuntimeInstanceLease? _lease;
     private bool _isDisposed;
 
     public IsolatedRuntime(IsolatedRuntimeHost host)
     {
-        var snapshot = host.GetRuntimeMemorySnapshot();
-        var store = host.CreateStore(this);
+        _host = host;
 
-        _store = store;
-        _instance = host.Linker.Instantiate(store, host.Module);
-        var exports = IsolatedRuntimeExports.Bind(_instance);
+        IsolatedRuntimeExports exports;
+        RuntimeMemorySnapshot? snapshot = null;
+
+        if (host.UseInstancePool)
+        {
+            // The rented instance is already started and reset to the clean post-startup state.
+            var lease = host.RentRuntimeInstance(this);
+            _lease = lease;
+            _store = lease.Store;
+            _instance = lease.Instance;
+            exports = lease.Exports;
+        }
+        else
+        {
+            snapshot = host.GetRuntimeMemorySnapshot();
+            _store = host.CreateStore(this);
+            _instance = host.Linker.Instantiate(_store, host.Module);
+            exports = IsolatedRuntimeExports.Bind(_instance);
+        }
 
         _memory = exports.Memory;
         _malloc = exports.Malloc;
@@ -58,7 +75,12 @@ public class IsolatedRuntime : IDisposable
         _invokeDotNetMethod = exports.InvokeDotNetMethod;
         _releaseObject = exports.ReleaseObject;
 
-        if (snapshot is null)
+        if (_lease is not null)
+        {
+            // Already started and reset by RentRuntimeInstance.
+            _shadowStack = new ShadowStack(_memory, _malloc, _free);
+        }
+        else if (snapshot is null)
         {
             _shadowStack = new ShadowStack(_memory, _malloc, _free);
             exports.Start();
@@ -544,7 +566,16 @@ public class IsolatedRuntime : IDisposable
     {
         _isDisposed = true;
         _shadowStack.Dispose();
-        _store.Dispose();
+
+        if (_lease is not null)
+        {
+            // Return the instance to the host pool for reuse instead of tearing it down.
+            _host.ReturnRuntimeInstance(_lease);
+        }
+        else
+        {
+            _store.Dispose();
+        }
     }
 
     internal void Free(int malloced_ptr)

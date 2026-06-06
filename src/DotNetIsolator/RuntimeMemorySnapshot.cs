@@ -16,6 +16,8 @@ internal sealed class RuntimeMemorySnapshot
         _changedPages = changedPages;
     }
 
+    public long MemoryLength => _memoryLength;
+
     public static RuntimeMemorySnapshot Create(IsolatedRuntimeHost host)
     {
         using var baselineStore = host.CreateStore(StoreData);

@@ -46,7 +46,7 @@ The sample measures:
 * startup medians without the module cache, with a cold module cache, and with a
   warm module cache
 * repeated runtime startup from one warm host, with and without the runtime
-  memory snapshot
+  memory snapshot, and with the reuse instance pool
 * parallel warm module-cache host construction
 
 ## Wizer status and replacements
@@ -143,6 +143,19 @@ The following paths were tested and kept:
   initialized linear-memory pages before user code runs and restores those pages
   into later runtimes from the same host. It improves repeated runtime
   construction while preserving per-runtime guest memory ownership.
+* Instance pool: opt-in through `IsolatedRuntimeHostOptions.UseInstancePool`
+  (requires the runtime memory snapshot). Instead of instantiating a fresh
+  Wasmtime instance per runtime, started instances are parked on dispose and
+  reused. A reused instance is reset to the clean post-startup state by restoring
+  the runtime memory snapshot, which resets every runtime root so the previous
+  tenant's managed state becomes unreachable and is zero-overwritten on the next
+  allocation. This skips the dominant per-runtime cost, which is Wasmtime
+  instantiation (about `3 ms`), not the snapshot copy. Instances that grow their
+  linear memory beyond the snapshot size are dropped rather than pooled. It is a
+  speed optimization for trusted guest code: the reset does not scrub every
+  orphaned page, so it should not be used as an isolation boundary against
+  hostile guests that can perform raw memory reads. Covered by a sequential-reuse
+  isolation test that asserts static guest state does not leak across tenants.
 * Native `int -> int` invoke path: `IsolatedMethod.Invoke<int, int>` bypasses
   MessagePack and object-graph serialization.
 * Packed scalar return: `dotnetisolator_invoke_i32_i32_packed` returns the
@@ -444,3 +457,13 @@ Interpretation:
 * The runtime memory snapshot moves one-time startup work into a preload step and
   cuts repeated runtime construction to about `3-4 ms`, roughly a `13x`
   improvement for that phase in this run.
+* The instance pool then reuses started instances and only resets them from the
+  snapshot, which avoids the per-runtime Wasmtime instantiation (the dominant
+  cost) and the cold-memory page faults of restoring into a fresh instance.
+  Repeated runtime construction dropped from about `3.2 ms` with the snapshot to
+  about `94-139 us` with the pool, roughly `25-35x` beyond the snapshot and about
+  `350-430x` versus the `40-49 ms` warm-host construction without a snapshot. A
+  startup breakdown showed the snapshot path spends about `3 ms` in
+  `Linker.Instantiate` and only about `0.7-1 ms` restoring the `~4.4 MB` of
+  changed pages; pooling removes the instantiation entirely, and the reset copy
+  runs from cache at roughly `40-50 GB/s` on an already-resident instance.

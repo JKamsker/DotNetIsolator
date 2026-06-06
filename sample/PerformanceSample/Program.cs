@@ -71,6 +71,7 @@ internal static class Program
         var warmHostStartup = StartupBenchmarks.MeasureWarmHostStartup(options, useRuntimeMemorySnapshot: false);
         var snapshotPreload = StartupBenchmarks.MeasureRuntimeMemorySnapshotPreload(options);
         var snapshotStartup = StartupBenchmarks.MeasureWarmHostStartup(options, useRuntimeMemorySnapshot: true);
+        var pooledStartup = StartupBenchmarks.MeasurePooledRuntimeStartup(options);
 
         Console.WriteLine();
         Console.WriteLine("Steady-state call overhead");
@@ -103,6 +104,7 @@ internal static class Program
         PrintRuntimeStartup("Warm host", warmHostStartup);
         Console.WriteLine($"Runtime memory snapshot preload: {FormatDuration(snapshotPreload)}");
         PrintRuntimeStartup("Warm runtime memory snapshot", snapshotStartup);
+        PrintRuntimeStartup("Warm instance pool", pooledStartup);
 
         Console.WriteLine();
         Console.WriteLine("Concurrent host construction");

@@ -80,6 +80,40 @@ internal static class StartupBenchmarks
             Median(firstCallTimes));
     }
 
+    public static StartupMeasurement MeasurePooledRuntimeStartup(BenchmarkOptions options)
+    {
+        var runtimeTimes = new List<TimeSpan>();
+        var objectTimes = new List<TimeSpan>();
+        var methodTimes = new List<TimeSpan>();
+        var firstCallTimes = new List<TimeSpan>();
+
+        using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
+        {
+            UsePrecompiledModuleCache = true,
+            PrecompiledModuleCacheDirectory = options.CacheDirectory,
+            UseRuntimeMemorySnapshot = true,
+            UseInstancePool = true,
+        }).WithBinDirectoryAssemblyLoader();
+        host.PreloadRuntimeMemorySnapshot();
+
+        // Warm the pool so the measured iterations exercise instance reuse, not first instantiation.
+        using (var _ = new IsolatedRuntime(host))
+        {
+        }
+
+        for (var i = 0; i < options.StartupIterations; i++)
+        {
+            MeasureRuntimeStartupOnHost(host, i, runtimeTimes, objectTimes, methodTimes, firstCallTimes);
+        }
+
+        return new StartupMeasurement(
+            Host: TimeSpan.Zero,
+            Median(runtimeTimes),
+            Median(objectTimes),
+            Median(methodTimes),
+            Median(firstCallTimes));
+    }
+
     public static TimeSpan MeasureRuntimeMemorySnapshotPreload(BenchmarkOptions options)
     {
         using var host = CreateHost(options, useModuleCache: true, useRuntimeMemorySnapshot: true);

@@ -1,4 +1,5 @@
-﻿using Wasmtime;
+﻿using System.Collections.Concurrent;
+using Wasmtime;
 
 namespace DotNetIsolator;
 
@@ -11,6 +12,7 @@ public class IsolatedRuntimeHost : IDisposable
 
     private readonly IsolatedRuntimeHostOptions _options;
     private readonly object _runtimeMemorySnapshotLock = new();
+    private readonly ConcurrentBag<RuntimeInstanceLease> _parkedInstances = new();
     private WasiConfiguration? _wasiConfiguration;
     private RuntimeMemorySnapshot? _runtimeMemorySnapshot;
     private List<AssemblyLoadCallback> _assemblyLoaders = new();
@@ -36,6 +38,13 @@ public class IsolatedRuntimeHost : IDisposable
             throw new ArgumentNullException(nameof(options));
         }
 
+        if (options.UseInstancePool && !options.UseRuntimeMemorySnapshot)
+        {
+            throw new ArgumentException(
+                $"{nameof(options.UseInstancePool)} requires {nameof(options.UseRuntimeMemorySnapshot)} to be enabled.",
+                nameof(options));
+        }
+
         _options = options;
         Engine = CreateEngine(options);
         Linker = new Linker(Engine);
@@ -50,6 +59,7 @@ public class IsolatedRuntimeHost : IDisposable
     internal Engine Engine { get; }
     internal Linker Linker { get; }
     internal Module Module { get; }
+    internal bool UseInstancePool => _options.UseInstancePool;
     internal WasiConfiguration WasiConfigurationOrDefault
         => _wasiConfiguration ?? CreateDefaultWasiConfiguration();
 
@@ -118,9 +128,65 @@ public class IsolatedRuntimeHost : IDisposable
 
     public void Dispose()
     {
+        while (_parkedInstances.TryTake(out var parked))
+        {
+            parked.Store.Dispose();
+        }
+
         Module.Dispose();
         Linker.Dispose();
         Engine.Dispose();
+    }
+
+    // Provides a started guest instance, reset to its clean post-startup state. With pooling
+    // enabled, a parked instance is reused (skipping Wasmtime instantiation); otherwise a fresh
+    // instance is instantiated and snapshot-restored. Only valid when a runtime memory snapshot
+    // is available (enforced by the constructor for UseInstancePool).
+    internal RuntimeInstanceLease RentRuntimeInstance(object storeData)
+    {
+        var snapshot = GetRuntimeMemorySnapshot()
+            ?? throw new InvalidOperationException(
+                $"{nameof(IsolatedRuntimeHostOptions.UseInstancePool)} requires {nameof(IsolatedRuntimeHostOptions.UseRuntimeMemorySnapshot)} to be enabled.");
+
+        if (_parkedInstances.TryTake(out var parked))
+        {
+            // Reset the reused instance to the clean post-startup state. Restoring the snapshot
+            // resets every runtime root, so the previous tenant's allocations become unreachable
+            // and are zero-overwritten on the next allocation.
+            snapshot.RestoreTo(parked.Exports.Memory);
+            parked.Store.SetData(storeData);
+            return parked;
+        }
+
+        var store = CreateStore(storeData);
+        try
+        {
+            var instance = Linker.Instantiate(store, Module);
+            var exports = IsolatedRuntimeExports.Bind(instance);
+            snapshot.RestoreTo(exports.Memory);
+            return new RuntimeInstanceLease(store, instance, exports);
+        }
+        catch
+        {
+            store.Dispose();
+            throw;
+        }
+    }
+
+    internal void ReturnRuntimeInstance(RuntimeInstanceLease lease)
+    {
+        // Only pool instances that stayed at the snapshot size. An instance that grew its linear
+        // memory has trailing pages a fresh instance would see as OS-zero; restoring the snapshot
+        // would not re-zero them, so it is dropped rather than risking a cross-tenant leak.
+        var snapshot = _runtimeMemorySnapshot;
+        if (snapshot is not null && lease.Exports.Memory.GetLength() == snapshot.MemoryLength)
+        {
+            _parkedInstances.Add(lease);
+        }
+        else
+        {
+            lease.Store.Dispose();
+        }
     }
 
     internal Store CreateStore(object data)
@@ -273,3 +339,19 @@ public class IsolatedRuntimeHost : IDisposable
 }
 
 public delegate byte[]? AssemblyLoadCallback(string assemblyName);
+
+internal sealed class RuntimeInstanceLease
+{
+    public RuntimeInstanceLease(Store store, Instance instance, IsolatedRuntimeExports exports)
+    {
+        Store = store;
+        Instance = instance;
+        Exports = exports;
+    }
+
+    public Store Store { get; }
+
+    public Instance Instance { get; }
+
+    public IsolatedRuntimeExports Exports { get; }
+}
