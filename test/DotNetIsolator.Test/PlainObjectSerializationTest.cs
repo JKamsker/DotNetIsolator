@@ -55,14 +55,53 @@ public sealed class PlainObjectSerializationTest : IDisposable
     }
 
     [Fact]
-    public void StringBearingObjectStillRoundTrips()
+    public void RoundTripsStringMember()
     {
-        // Has a string member, so the native fast path bails and the managed path serializes it.
         var result = _runtime.CreateObject<Target>().Invoke<Mixed>(nameof(Target.MakeMixed));
 
         Assert.Equal(5, result.Number);
         Assert.Equal("hello world", result.Text);
         Assert.Equal(9.5, result.Value);
+    }
+
+    [Fact]
+    public void RoundTripsUnicodeString()
+    {
+        // Includes 1-, 2-, 3- and 4-byte (surrogate pair) UTF-8 sequences.
+        var result = _runtime.CreateObject<Target>().Invoke<Mixed>(nameof(Target.MakeUnicode));
+
+        Assert.Equal(1, result.Number);
+        Assert.Equal("ascii héllo ☃ 日本語 𝄞", result.Text);
+        Assert.Equal(2.0, result.Value);
+    }
+
+    [Fact]
+    public void RoundTripsEmptyString()
+    {
+        var result = _runtime.CreateObject<Target>().Invoke<Mixed>(nameof(Target.MakeEmptyString));
+
+        Assert.Equal(string.Empty, result.Text);
+        Assert.Equal(8, result.Number);
+    }
+
+    [Fact]
+    public void RoundTripsNullString()
+    {
+        var result = _runtime.CreateObject<Target>().Invoke<Mixed>(nameof(Target.MakeNullString));
+
+        Assert.Null(result.Text);
+        Assert.Equal(99, result.Number);
+        Assert.Equal(1.5, result.Value);
+    }
+
+    [Fact]
+    public void RoundTripsLongString()
+    {
+        // 500 bytes of UTF-8 forces a multi-byte 7-bit length prefix.
+        var result = _runtime.CreateObject<Target>().Invoke<Mixed>(nameof(Target.MakeLongString));
+
+        Assert.Equal(500, result.Text!.Length);
+        Assert.All(result.Text, c => Assert.Equal('x', c));
     }
 
     public void Dispose()
@@ -120,6 +159,14 @@ public sealed class PlainObjectSerializationTest : IDisposable
         public FieldSample MakeFieldSample() => new() { Alpha = 11, Beta = 2.25f, Gamma = -42L };
 
         public Mixed MakeMixed() => new() { Number = 5, Text = "hello world", Value = 9.5 };
+
+        public Mixed MakeUnicode() => new() { Number = 1, Text = "ascii héllo ☃ 日本語 𝄞", Value = 2.0 };
+
+        public Mixed MakeEmptyString() => new() { Number = 8, Text = string.Empty, Value = 0.0 };
+
+        public Mixed MakeNullString() => new() { Number = 99, Text = null, Value = 1.5 };
+
+        public Mixed MakeLongString() => new() { Number = 0, Text = new string('x', 500), Value = 0.0 };
 
         public CharBearing MakeCharBearing() => new() { Code = 42, Symbol = 'Z' };
     }

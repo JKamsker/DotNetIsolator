@@ -190,16 +190,19 @@ The following paths were tested and kept:
   large-buffer copies for the common array-return case.
 * Native plain-object serializer: the generic invoke path's result serialization
   first tries a native field-walking serializer for plain objects whose members
-  are all non-`string`, non-`char` primitives (records/structs of numbers). It
+  are non-`char` primitives and/or `string`s (the common DTO/record shape). It
   collects the type's serializable members in the same order as the managed
   `GetSerializableMembers` (get/set properties plus non-backing instance fields,
   sorted by name) and writes the positional object-graph format directly with
-  `mono_field_get_value`, skipping the managed serialize round-trip. Anything it
-  cannot prove safe -- `string`/`char` members (which the managed format writes
-  through the text encoding), collections, enums, nesting, `[NonSerialized]` or
-  otherwise attributed members -- falls back to the managed serializer, so the
-  wire format is always identical. A pure-primitive object return dropped from
-  about `20 us` to about `2.5 us` (about `8x`).
+  `mono_field_get_value`, skipping the managed serialize round-trip. Strings are
+  encoded exactly as `BinaryWriter` does (a 7-bit-encoded UTF-8 length followed
+  by UTF-8 bytes, with .NET's replacement behavior for lone surrogates), so the
+  wire format stays identical. Anything it cannot prove safe -- `char` members
+  (also encoded as text), collections, enums, nesting, `[NonSerialized]` or
+  otherwise attributed members -- falls back to the managed serializer. A
+  pure-primitive object return dropped from about `20 us` to about `2.5 us`, and
+  a string-bearing object (an `int`/`string`/`int`/`bool`/`long` payload) from
+  about `20 us` to about `2.7 us`, both roughly `7-8x`.
 * Native blittable-list return path: `IsolatedMethod.Invoke<List<T>>` for any
   blittable primitive element type returns a pointer to the list's backing array
   (`_items`) for its live element count (`_size`), read through mono metadata,

@@ -329,10 +329,12 @@ typedef struct SimpleMember {
 	int kind;
 } SimpleMember;
 
-// Element kinds the object fast path can write verbatim. char is intentionally excluded: the
-// managed object-graph format writes char (like string) through the text encoding, not as fixed
-// bytes, so char-bearing objects fall back to the managed serializer.
-static int simple_primitive_kind(MonoType* type) {
+#define KIND_STRING 13
+
+// Member kinds the object fast path can write. char is intentionally excluded: the managed
+// object-graph format writes char through the text encoding, not as fixed bytes. string IS handled
+// (kind KIND_STRING) by encoding it the same way BinaryWriter does (7-bit length + UTF-8).
+static int simple_member_kind(MonoType* type) {
 	switch (mono_type_get_type(type)) {
 		case MONO_TYPE_BOOLEAN: return 1;
 		case MONO_TYPE_I1: return 2;
@@ -345,8 +347,79 @@ static int simple_primitive_kind(MonoType* type) {
 		case MONO_TYPE_U8: return 10;
 		case MONO_TYPE_R4: return 11;
 		case MONO_TYPE_R8: return 12;
+		case MONO_TYPE_STRING: return KIND_STRING;
 		default: return 0;
 	}
+}
+
+// Computes the UTF-8 byte length of a UTF-16 sequence using the same replacement-on-lone-surrogate
+// behavior as .NET's default UTF8Encoding, so the bytes match BinaryWriter.Write(string).
+static int utf16_to_utf8_length(const uint16_t* chars, int char_count) {
+	int len = 0;
+	for (int i = 0; i < char_count; i++) {
+		uint32_t c = chars[i];
+		if (c >= 0xD800 && c <= 0xDBFF && i + 1 < char_count && chars[i + 1] >= 0xDC00 && chars[i + 1] <= 0xDFFF) {
+			len += 4;
+			i++;
+		} else if (c >= 0xD800 && c <= 0xDFFF) {
+			len += 3; // U+FFFD replacement
+		} else if (c < 0x80) {
+			len += 1;
+		} else if (c < 0x800) {
+			len += 2;
+		} else {
+			len += 3;
+		}
+	}
+	return len;
+}
+
+static int utf16_to_utf8_write(const uint16_t* chars, int char_count, char* out) {
+	char* p = out;
+	for (int i = 0; i < char_count; i++) {
+		uint32_t c = chars[i];
+		if (c >= 0xD800 && c <= 0xDBFF && i + 1 < char_count && chars[i + 1] >= 0xDC00 && chars[i + 1] <= 0xDFFF) {
+			uint32_t cp = 0x10000 + ((c - 0xD800) << 10) + (chars[i + 1] - 0xDC00);
+			*p++ = (char)(0xF0 | (cp >> 18));
+			*p++ = (char)(0x80 | ((cp >> 12) & 0x3F));
+			*p++ = (char)(0x80 | ((cp >> 6) & 0x3F));
+			*p++ = (char)(0x80 | (cp & 0x3F));
+			i++;
+		} else if (c >= 0xD800 && c <= 0xDFFF) {
+			*p++ = (char)0xEF;
+			*p++ = (char)0xBF;
+			*p++ = (char)0xBD;
+		} else if (c < 0x80) {
+			*p++ = (char)c;
+		} else if (c < 0x800) {
+			*p++ = (char)(0xC0 | (c >> 6));
+			*p++ = (char)(0x80 | (c & 0x3F));
+		} else {
+			*p++ = (char)(0xE0 | (c >> 12));
+			*p++ = (char)(0x80 | ((c >> 6) & 0x3F));
+			*p++ = (char)(0x80 | (c & 0x3F));
+		}
+	}
+	return (int)(p - out);
+}
+
+static int sizeof_7bit_length(uint32_t value) {
+	int n = 1;
+	while (value >= 0x80) {
+		value >>= 7;
+		n++;
+	}
+	return n;
+}
+
+static int write_7bit_length(char* out, uint32_t value) {
+	char* p = out;
+	while (value >= 0x80) {
+		*p++ = (char)(value | 0x80);
+		value >>= 7;
+	}
+	*p++ = (char)value;
+	return (int)(p - out);
 }
 
 static int simple_member_compare(const void* a, const void* b) {
@@ -381,7 +454,7 @@ static int collect_simple_members(MonoClass* klass, SimpleMember* members) {
 			return -1; // computed property
 		}
 
-		int kind = simple_primitive_kind(mono_field_get_type(backing_field));
+		int kind = simple_member_kind(mono_field_get_type(backing_field));
 		if (kind == 0 || count >= MAX_SIMPLE_MEMBERS) {
 			return -1;
 		}
@@ -420,7 +493,7 @@ static int collect_simple_members(MonoClass* klass, SimpleMember* members) {
 			return -1; // e.g. [NonSerialized]
 		}
 
-		int kind = simple_primitive_kind(mono_field_get_type(field));
+		int kind = simple_member_kind(mono_field_get_type(field));
 		if (kind == 0 || count >= MAX_SIMPLE_MEMBERS) {
 			return -1;
 		}
@@ -435,8 +508,9 @@ static int collect_simple_members(MonoClass* klass, SimpleMember* members) {
 	return count;
 }
 
-// Serializes a plain primitive-only object directly into a managed byte[] matching the object-graph
-// positional format, returning 1 on success or 0 to fall back to the managed serializer.
+// Serializes a plain object whose members are non-char primitives and/or strings directly into a
+// managed byte[] matching the object-graph positional format, returning 1 on success or 0 to fall
+// back to the managed serializer.
 static int try_native_serialize_object(MonoObject* value, void** out_data, int* out_length, MonoGCHandle* out_handle) {
 	MonoClass* klass = mono_object_get_class(value);
 	if (mono_class_is_enum(klass)) {
@@ -444,8 +518,8 @@ static int try_native_serialize_object(MonoObject* value, void** out_data, int* 
 	}
 
 	MonoType* klass_type = mono_class_get_type(klass);
-	if (simple_primitive_kind(klass_type) != 0) {
-		return 0; // boxed primitive
+	if (simple_member_kind(klass_type) != 0) {
+		return 0; // boxed primitive or string
 	}
 
 	if (cached_ienumerable_class == NULL) {
@@ -461,30 +535,60 @@ static int try_native_serialize_object(MonoObject* value, void** out_data, int* 
 		return 0;
 	}
 
+	// Pass 1: total size. String members are variable length, so read each string field and compute
+	// its UTF-8 length. A null string member contributes only its (false) presence byte.
 	int marker = -1;
 	int total = 1 + 4 + 4;
 	for (int i = 0; i < count; i++) {
-		total += 1 + kind_size(members[i].kind);
+		total += 1; // member presence byte
+		if (members[i].kind == KIND_STRING) {
+			MonoString* str = NULL;
+			mono_field_get_value(value, members[i].field, &str);
+			if (str) {
+				int utf8_length = utf16_to_utf8_length((const uint16_t*)mono_string_chars(str), mono_string_length(str));
+				total += sizeof_7bit_length((uint32_t)utf8_length) + utf8_length;
+			}
+		} else {
+			total += kind_size(members[i].kind);
+		}
 	}
 
 	MonoArray* array = mono_array_new(mono_domain_get(), mono_get_byte_class(), total);
+	// Pin before writing so the destination pointer stays valid (no allocation happens during the
+	// write, but pinning keeps this robust).
+	MonoGCHandle handle = (MonoGCHandle)mono_gchandle_new((MonoObject*)array, /* pinned */ 1);
 	char* buffer = (char*)mono_array_addr_with_size(array, 1, 0);
 	int offset = 0;
 	buffer[offset++] = 1; // top-level not-null
 	memcpy(buffer + offset, &marker, 4); offset += 4;
 	memcpy(buffer + offset, &count, 4); offset += 4;
 	for (int i = 0; i < count; i++) {
-		buffer[offset++] = 1; // member not-null
-		int member_size = kind_size(members[i].kind);
-		// Read into an aligned scratch, then copy out byte-wise: the wire buffer is byte-packed, so
-		// writing an 8-byte value (e.g. double) directly to an unaligned offset is unreliable.
-		uint64_t scratch = 0;
-		mono_field_get_value(value, members[i].field, &scratch);
-		memcpy(buffer + offset, &scratch, member_size);
-		offset += member_size;
+		if (members[i].kind == KIND_STRING) {
+			MonoString* str = NULL;
+			mono_field_get_value(value, members[i].field, &str);
+			if (!str) {
+				buffer[offset++] = 0; // null string -> not-present
+				continue;
+			}
+			buffer[offset++] = 1;
+			const uint16_t* chars = (const uint16_t*)mono_string_chars(str);
+			int char_count = mono_string_length(str);
+			int utf8_length = utf16_to_utf8_length(chars, char_count);
+			offset += write_7bit_length(buffer + offset, (uint32_t)utf8_length);
+			offset += utf16_to_utf8_write(chars, char_count, buffer + offset);
+		} else {
+			buffer[offset++] = 1;
+			int member_size = kind_size(members[i].kind);
+			// Read into an aligned scratch, then copy out byte-wise: the wire buffer is byte-packed,
+			// so writing an 8-byte value (e.g. double) directly to an unaligned offset is unreliable.
+			uint64_t scratch = 0;
+			mono_field_get_value(value, members[i].field, &scratch);
+			memcpy(buffer + offset, &scratch, member_size);
+			offset += member_size;
+		}
 	}
 
-	*out_handle = (MonoGCHandle)mono_gchandle_new((MonoObject*)array, /* pinned */ 1);
+	*out_handle = handle;
 	*out_data = mono_array_addr_with_size(array, 1, 0);
 	*out_length = total;
 	return 1;
