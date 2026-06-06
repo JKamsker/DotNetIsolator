@@ -258,6 +258,20 @@ rediscovered without a new runtime, SDK, or workload:
   benchmark measured about `46.0 us` with the existing per-object dictionary
   build and about `47.6 us` with the cached dictionary. The cache adds
   complexity and memory retention without improving this workload.
+* Cached default WASI configuration per host: a prototype stored the default
+  `WasiConfiguration` instead of rebuilding it in `CreateStore`. Repeated
+  warm-host runtime startup did not show a meaningful improvement: about
+  `35.43 ms` before and `35.34 ms` after, with runtime-snapshot startup at about
+  `2.92 ms` before and `2.86 ms` after.
+* Process-wide shared `Engine`/`Module` cache as a default: not accepted because
+  it changes `IsolatedRuntimeHost.Dispose` resource-release semantics and can
+  retain a compiled module for the process lifetime. This may be revisited as an
+  explicit opt-in cache with clear lifetime ownership, but it should not be
+  introduced as an invisible default optimization.
+* WASI Preview 2 shim import-plan caching by `Module`: not accepted because
+  hosts currently load distinct `Module` instances, so a per-module cache would
+  not hit on repeated host construction. It should only be reconsidered together
+  with an explicit shared-module lifetime design.
 
 ## Measured Results
 
