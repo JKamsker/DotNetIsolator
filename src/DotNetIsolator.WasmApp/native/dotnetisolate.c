@@ -126,10 +126,20 @@ MonoMethod* dotnetisolator_lookup_method(char* assembly_name, char* namespace, c
 
 MonoMethod* deserialize_param_dotnet_method;
 MonoMethod* serialize_return_value_dotnet_method;
+MonoMethod* ensure_async_context_method;
+MonoMethod* complete_async_value_method;
 
 int fail_with_message(const char* message, MonoString** error_msg) {
 	*error_msg = mono_string_new_wrapper(message);
 	return 0;
+}
+
+void ensure_async_context(MonoObject** exception_buf) {
+	if (ensure_async_context_method == 0) {
+		ensure_async_context_method = lookup_dotnet_method("DotNetIsolator.WasmApp", "DotNetIsolator.WasmApp", "AsyncBridge", "EnsureInstalled", 0);
+	}
+
+	mono_runtime_invoke(ensure_async_context_method, NULL, NULL, exception_buf);
 }
 
 int method_signature_is_i32_i32(MonoMethod* method) {
@@ -255,6 +265,25 @@ int mono_type_matches_kind(MonoType* type, int kind) {
 		case 12: return mt == MONO_TYPE_R8;
 		default: return 0;
 	}
+}
+
+int method_return_type_is_task_like(MonoMethod* method) {
+	MonoType* return_type = mono_signature_get_return_type(mono_method_signature(method));
+	MonoClass* return_class = mono_class_from_mono_type(return_type);
+	if (!return_class) {
+		return 0;
+	}
+
+	const char* ns = mono_class_get_namespace(return_class);
+	const char* name = mono_class_get_name(return_class);
+	if (ns == NULL || name == NULL || strcmp(ns, "System.Threading.Tasks") != 0) {
+		return 0;
+	}
+
+	return strcmp(name, "Task") == 0
+		|| strcmp(name, "Task`1") == 0
+		|| strcmp(name, "ValueTask") == 0
+		|| strcmp(name, "ValueTask`1") == 0;
 }
 
 // Returns the element size for a () -> blittable[] method, or 0 if the signature does not match.
@@ -613,6 +642,8 @@ static int try_native_serialize_object(MonoObject* value, void** out_data, int* 
 void serialize_value_into(MonoObject* value, void** out_data, int* out_length, MonoGCHandle* out_handle, MonoObject** exception_buf) {
 	if (!value) {
 		*out_data = NULL;
+		*out_length = 0;
+		*out_handle = NULL;
 		return;
 	}
 
@@ -632,17 +663,33 @@ void serialize_value_into(MonoObject* value, void** out_data, int* out_length, M
 }
 
 void serialize_return_value(MonoObject* value, RunnerInvocation* invocation, MonoObject** exception_buf) {
+	if (value && method_return_type_is_task_like(invocation->method_ptr)) {
+		if (complete_async_value_method == 0) {
+			complete_async_value_method = lookup_dotnet_method("DotNetIsolator.WasmApp", "DotNetIsolator.WasmApp", "AsyncBridge", "Complete", 1);
+		}
+
+		void* complete_params[] = { value };
+		value = mono_runtime_invoke(complete_async_value_method, NULL, complete_params, exception_buf);
+		if (*exception_buf) {
+			invocation->result_serialized = NULL;
+			invocation->result_serialized_length = 0;
+			invocation->result_serialized_handle = NULL;
+			return;
+		}
+	}
+
 	serialize_value_into(value, &invocation->result_serialized, &invocation->result_serialized_length, &invocation->result_serialized_handle, exception_buf);
 }
 
 __attribute__((export_name("dotnetisolator_invoke_method")))
 void dotnetisolator_invoke_method(RunnerInvocation* invocation) {
 	MonoObject* exc = NULL;
+	ensure_async_context(&exc);
 
 	int num_args = invocation->args_length_prefixed_buffers_length;
 	void* method_params[num_args];
 	MonoGCHandle arg_handles[num_args];
-	for (int i = 0; i < num_args; i++) {
+	for (int i = 0; !exc && i < num_args; i++) {
 		void* arg_length_prefixed_buffer = invocation->args_length_prefixed_buffers[i];
 		method_params[i] = deserialize_param(arg_length_prefixed_buffer, &arg_handles[i], &exc);
 		if (exc) {

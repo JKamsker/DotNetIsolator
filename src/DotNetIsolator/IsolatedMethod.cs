@@ -354,4 +354,8 @@ public class IsolatedMethod
 
         return _runtimeInstance.InvokeScalarBatch<T0, TRes>(_monoMethodPtr, instance, args, argKind, resultKind);
     }
+
+    internal IsolatedRuntime Runtime => _runtimeInstance;
+
+    internal int MethodPointer => _monoMethodPtr;
 }

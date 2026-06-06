@@ -253,6 +253,16 @@ You can also find methods without having to instantiate any objects first:
 var getAgeMethod = isolatedRuntime.GetMethod(typeof(Person), "GetAge");
 ```
 
+### Calling async methods on isolated objects
+
+Object methods that return `Task`, `Task<T>`, `ValueTask`, or `ValueTask<T>` can be invoked with `InvokeAsync`:
+
+```cs
+int result = await isolatedObject.InvokeAsync<int>("ComputeAsync", 123);
+```
+
+This supports cooperative async continuations inside the isolated runtime, for example `await Task.Yield()` and async chains that complete by posting back to the isolated scheduler. It does not currently provide a host-backed timer, I/O, or ThreadPool event source, so awaits such as `Task.Delay`, async file/network APIs, or `Task.Run` are not expected to make progress.
+
 ## Calling the host from the guest
 
 The host may register named callbacks that can be invoked from guest code. For example:

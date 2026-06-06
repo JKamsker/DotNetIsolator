@@ -5,6 +5,7 @@ using DotNetIsolator.Internal;
 
 AppContext.SetSwitch("System.Resources.UseSystemResourceKeys", true);
 AppContext.SetSwitch("System.Globalization.Invariant", true);
+DotNetIsolator.WasmApp.AsyncBridge.EnsureInstalled();
 
 // Warm up the serialization code paths.
 var captured = new List<string> { "a", "b" };
