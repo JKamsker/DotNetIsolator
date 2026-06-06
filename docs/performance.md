@@ -153,6 +153,16 @@ The following paths were tested and kept:
   bypasses object-graph serialization for exact `() -> byte[]` methods. The
   guest array is pinned only while the host copies the bytes into a new host
   array, then the guest handle is released.
+* Native zero-argument blittable-array return path: `IsolatedMethod.Invoke<T[]>`
+  for any blittable primitive element type (`bool`, `sbyte`, `byte`, `short`,
+  `ushort`, `char`, `int`, `uint`, `long`, `ulong`, `float`, `double`) bypasses
+  object-graph serialization for exact `() -> T[]` methods. The guest returns a
+  pointer to the array's pinned element storage and its element count and
+  element size; the host copies the raw element bytes once into a fresh host
+  array and validates the element size against the expected `T`. This
+  generalizes the `() -> byte[]` fast path and removes the guest-side
+  serializer invocation, the guest `MemoryStream`/`ToArray`, and the redundant
+  large-buffer copies for the common array-return case.
 * Native void invoke paths: `IsolatedMethod.InvokeVoid` and
   `IsolatedMethod.InvokeVoid<int>` bypass object-graph serialization for exact
   `() -> void` and `int -> void` methods while keeping native signature
@@ -367,7 +377,20 @@ Interpretation:
   about `30.018 ms` to about `216.013 us` (about `139x`), and a `double[]`
   argument from about `33.248 ms` to about `548.793 us` (about `61x`). The ratio
   grows with array length because the old path cost scales with element count
-  while the new path scales with bytes copied.
+  (about `0.97 us` per `double` element) while the new path scales with bytes
+  copied.
+* The native blittable-array return path then removed the remaining guest-side
+  serialization for the `() -> T[]` case. On the same `32768`-element payload it
+  reduced the `double[]` return from the codec's about `218.070 us` to about
+  `41.117 us` and the `long[]` return from about `216.013 us` to about
+  `42.393 us`. Measured end to end against the original per-element baseline this
+  is about `776x` for the `double[]` return and about `708x` for the `long[]`
+  return. Because the old path is linear in element count, the advantage keeps
+  growing with size: a `131072`-element `double[]` return measured about
+  `118.840 us`, versus an extrapolated per-element baseline of about `127.6 ms`,
+  which is about `1074x`. Collection arguments and `List<T>`/nested-array
+  payloads still use the generalized managed codec, so they keep their large
+  win too.
 * Removing the duplicate host-side raw callback argument copy reduced a clean
   A/B sample for a raw 64 KiB host callback from about `88.4 us` at `HEAD` to
   about `70.7 us`. The callback result buffer is now also released by the guest

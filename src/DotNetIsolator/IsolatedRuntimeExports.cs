@@ -12,6 +12,7 @@ internal sealed class IsolatedRuntimeExports
         Func<int, int, int, int, int, int, int> lookupDotNetMethod,
         Func<int, int, int> deserializeAsDotNetObject,
         Action<int, int, int> invokeByteArrayMethod,
+        Action<int, int, int> invokeBlittableArrayMethod,
         Func<int, int, long> invokeInt32MethodNoArgsPacked,
         Func<int, int, int, long> invokeInt32MethodPacked,
         Func<int, int, int> invokeVoidMethod,
@@ -27,6 +28,7 @@ internal sealed class IsolatedRuntimeExports
         LookupDotNetMethod = lookupDotNetMethod;
         DeserializeAsDotNetObject = deserializeAsDotNetObject;
         InvokeByteArrayMethod = invokeByteArrayMethod;
+        InvokeBlittableArrayMethod = invokeBlittableArrayMethod;
         InvokeInt32MethodNoArgsPacked = invokeInt32MethodNoArgsPacked;
         InvokeInt32MethodPacked = invokeInt32MethodPacked;
         InvokeVoidMethod = invokeVoidMethod;
@@ -43,6 +45,7 @@ internal sealed class IsolatedRuntimeExports
     public Func<int, int, int, int, int, int, int> LookupDotNetMethod { get; }
     public Func<int, int, int> DeserializeAsDotNetObject { get; }
     public Action<int, int, int> InvokeByteArrayMethod { get; }
+    public Action<int, int, int> InvokeBlittableArrayMethod { get; }
     public Func<int, int, long> InvokeInt32MethodNoArgsPacked { get; }
     public Func<int, int, int, long> InvokeInt32MethodPacked { get; }
     public Func<int, int, int> InvokeVoidMethod { get; }
@@ -67,6 +70,8 @@ internal sealed class IsolatedRuntimeExports
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_deserialize_object'");
         var invokeByteArrayMethod = instance.GetAction<int, int, int>("dotnetisolator_invoke_byte_array")
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_byte_array'");
+        var invokeBlittableArrayMethod = instance.GetAction<int, int, int>("dotnetisolator_invoke_blittable_array")
+            ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_blittable_array'");
         var invokeInt32MethodNoArgsPacked = instance.GetFunction<int, int, long>("dotnetisolator_invoke_i32_packed")
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_i32_packed'");
         var invokeInt32MethodPacked = instance.GetFunction<int, int, int, long>("dotnetisolator_invoke_i32_i32_packed")
@@ -90,6 +95,7 @@ internal sealed class IsolatedRuntimeExports
             lookupDotNetMethod,
             deserializeAsDotNetObject,
             invokeByteArrayMethod,
+            invokeBlittableArrayMethod,
             invokeInt32MethodNoArgsPacked,
             invokeInt32MethodPacked,
             invokeVoidMethod,

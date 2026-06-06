@@ -30,7 +30,33 @@ public class IsolatedMethod
             return (TRes)(object)result!;
         }
 
+        if (TryInvokeBlittableArray<TRes>(instance, out var blittableArray))
+        {
+            return blittableArray;
+        }
+
         return _runtimeInstance.InvokeDotNetMethod<TRes>(_monoMethodPtr, instance, Span<int>.Empty);
+    }
+
+    // Routes exact () -> T[] calls for blittable primitive element types through the native
+    // zero-copy array fast path. byte[] keeps its own dedicated path above. The typeof checks
+    // collapse to the single matching branch for each reference-typed instantiation.
+    private bool TryInvokeBlittableArray<TRes>(IsolatedObject? instance, out TRes result)
+    {
+        if (typeof(TRes) == typeof(int[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<int>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(uint[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<uint>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(long[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<long>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(ulong[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<ulong>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(short[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<short>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(ushort[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<ushort>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(double[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<double>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(float[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<float>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(char[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<char>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(bool[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<bool>(_monoMethodPtr, instance)!; return true; }
+        if (typeof(TRes) == typeof(sbyte[])) { result = (TRes)(object)_runtimeInstance.InvokeBlittableArrayMethod<sbyte>(_monoMethodPtr, instance)!; return true; }
+
+        result = default!;
+        return false;
     }
 
     public TRes Invoke<T0, TRes>(IsolatedObject? instance, T0 param0)

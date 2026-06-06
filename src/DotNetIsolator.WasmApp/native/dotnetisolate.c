@@ -25,6 +25,14 @@ typedef struct ByteArrayInvocationResult {
 	MonoString* error_msg;
 } ByteArrayInvocationResult;
 
+typedef struct BlittableArrayInvocationResult {
+	void* data;
+	int length; // element count
+	int element_size; // bytes per element
+	MonoGCHandle result_handle;
+	MonoString* error_msg;
+} BlittableArrayInvocationResult;
+
 __attribute__((export_name("dotnetisolator_instantiate_class")))
 MonoGCHandle dotnetisolator_instantiate_class(char* assembly_name, char* namespace, char* class_name, char** error_msg) {
 	MonoGCHandle result;
@@ -136,6 +144,53 @@ int method_signature_is_i32_void(MonoMethod* method) {
 
 	return mono_type_get_type(parameter_type) == MONO_TYPE_I4
 		&& mono_type_get_type(return_type) == MONO_TYPE_VOID;
+}
+
+// Returns the element size in bytes for a blittable primitive element class, or 0 if the
+// element type is not a blittable primitive that can be transferred as a raw memory block.
+int blittable_element_size(MonoClass* element_class) {
+	if (element_class == mono_get_byte_class()
+		|| element_class == mono_get_sbyte_class()
+		|| element_class == mono_get_boolean_class()) {
+		return 1;
+	}
+
+	if (element_class == mono_get_int16_class()
+		|| element_class == mono_get_uint16_class()
+		|| element_class == mono_get_char_class()) {
+		return 2;
+	}
+
+	if (element_class == mono_get_int32_class()
+		|| element_class == mono_get_uint32_class()
+		|| element_class == mono_get_single_class()) {
+		return 4;
+	}
+
+	if (element_class == mono_get_int64_class()
+		|| element_class == mono_get_uint64_class()
+		|| element_class == mono_get_double_class()) {
+		return 8;
+	}
+
+	return 0;
+}
+
+// Returns the element size for a () -> blittable[] method, or 0 if the signature does not match.
+int blittable_array_return_element_size(MonoMethod* method) {
+	MonoMethodSignature* signature = mono_method_signature(method);
+	if (mono_signature_get_param_count(signature) != 0) {
+		return 0;
+	}
+
+	MonoType* return_type = mono_signature_get_return_type(signature);
+	if (mono_type_get_type(return_type) != MONO_TYPE_SZARRAY) {
+		return 0;
+	}
+
+	MonoClass* array_class = mono_class_from_mono_type(return_type);
+	MonoClass* element_class = mono_class_get_element_class(array_class);
+	return blittable_element_size(element_class);
 }
 
 int method_signature_is_byte_array(MonoMethod* method) {
@@ -373,6 +428,48 @@ static void invoke_byte_array(MonoGCHandle target, MonoMethod* method_ptr, ByteA
 		: mono_array_addr_with_size(result_array, 1, 0);
 }
 
+static void invoke_blittable_array(MonoGCHandle target, MonoMethod* method_ptr, BlittableArrayInvocationResult* result) {
+	result->data = NULL;
+	result->length = 0;
+	result->element_size = 0;
+	result->result_handle = NULL;
+	result->error_msg = NULL;
+
+	int element_size = blittable_array_return_element_size(method_ptr);
+	if (element_size == 0) {
+		fail_with_message("The method does not have the required () -> blittable primitive array signature.", &result->error_msg);
+		return;
+	}
+
+	MonoObject* exc = NULL;
+	MonoObject* target_object = target ? mono_gchandle_get_target((uint32_t)target) : 0;
+	MonoObject* result_object = mono_runtime_invoke(method_ptr, target_object, NULL, &exc);
+
+	if (exc) {
+		MonoObject* ignored_tostring_exception;
+		result->error_msg = mono_object_to_string(exc, &ignored_tostring_exception);
+		return;
+	}
+
+	if (!result_object) {
+		return;
+	}
+
+	MonoArray* result_array = (MonoArray*)result_object;
+	uintptr_t result_length = mono_array_length(result_array);
+	if (result_length > INT32_MAX) {
+		fail_with_message("The array result is too large.", &result->error_msg);
+		return;
+	}
+
+	result->result_handle = (MonoGCHandle)mono_gchandle_new(result_object, /* pinned */ 1);
+	result->length = (int)result_length;
+	result->element_size = element_size;
+	result->data = result->length == 0
+		? NULL
+		: mono_array_addr_with_size(result_array, element_size, 0);
+}
+
 __attribute__((export_name("dotnetisolator_invoke_i32_i32")))
 int dotnetisolator_invoke_i32_i32(MonoGCHandle target, MonoMethod* method_ptr, int arg0, int* result, MonoString** error_msg) {
 	return invoke_i32_i32(target, method_ptr, arg0, result, error_msg);
@@ -381,6 +478,11 @@ int dotnetisolator_invoke_i32_i32(MonoGCHandle target, MonoMethod* method_ptr, i
 __attribute__((export_name("dotnetisolator_invoke_byte_array")))
 void dotnetisolator_invoke_byte_array(ByteArrayInvocationResult* result, MonoGCHandle target, MonoMethod* method_ptr) {
 	invoke_byte_array(target, method_ptr, result);
+}
+
+__attribute__((export_name("dotnetisolator_invoke_blittable_array")))
+void dotnetisolator_invoke_blittable_array(BlittableArrayInvocationResult* result, MonoGCHandle target, MonoMethod* method_ptr) {
+	invoke_blittable_array(target, method_ptr, result);
 }
 
 __attribute__((export_name("dotnetisolator_invoke_i32_packed")))

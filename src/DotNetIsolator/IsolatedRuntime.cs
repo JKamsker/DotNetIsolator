@@ -1,5 +1,6 @@
 ﻿using DotNetIsolator.Internal;
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using Wasmtime;
@@ -21,6 +22,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int> _invokeVoidMethod;
     private readonly Func<int, int, int, int> _invokeVoidMethodInt32;
     private readonly Action<int, int, int> _invokeByteArrayMethod;
+    private readonly Action<int, int, int> _invokeBlittableArrayMethod;
     private readonly Action<int> _invokeDotNetMethod;
     private readonly Action<int> _releaseObject;
     private readonly ConcurrentDictionary<(string AssemblyName, string? Namespace, string? DeclaringTypeName, string TypeName, string MethodName, int NumArgs), IsolatedMethod> _methodLookupCache = new();
@@ -48,6 +50,7 @@ public class IsolatedRuntime : IDisposable
         _invokeVoidMethod = exports.InvokeVoidMethod;
         _invokeVoidMethodInt32 = exports.InvokeVoidMethodInt32;
         _invokeByteArrayMethod = exports.InvokeByteArrayMethod;
+        _invokeBlittableArrayMethod = exports.InvokeBlittableArrayMethod;
         _invokeDotNetMethod = exports.InvokeDotNetMethod;
         _releaseObject = exports.ReleaseObject;
 
@@ -289,6 +292,64 @@ public class IsolatedRuntime : IDisposable
                 }
 
                 return bytes;
+            }
+            finally
+            {
+                ReleaseGCHandle(result.ResultGCHandle);
+            }
+        }
+        finally
+        {
+            _shadowStack.PopFrame(wasmPtr, len);
+        }
+    }
+
+    // Zero-copy fast path for exact () -> T[] methods where T is a blittable primitive.
+    // The guest returns a pointer to the array's pinned element storage; the host copies the
+    // raw element bytes once into a fresh host array. This bypasses guest-side object-graph
+    // serialization entirely, mirroring the existing () -> byte[] fast path.
+    internal T[]? InvokeBlittableArrayMethod<T>(int monoMethodPtr, IsolatedObject? instance) where T : unmanaged
+    {
+        var len = Marshal.SizeOf<BlittableArrayInvocationResult>();
+        var wasmPtr = _shadowStack.PushFrame(len);
+        try
+        {
+            var resultStruct = _memory.GetSpan(wasmPtr, len);
+            ref var result = ref MemoryMarshal.AsRef<BlittableArrayInvocationResult>(resultStruct);
+            result = default;
+
+            _invokeBlittableArrayMethod(
+                wasmPtr,
+                instance is null ? 0 : instance.GuestGCHandle,
+                monoMethodPtr);
+
+            if (result.ErrorMessage != 0)
+            {
+                throw new IsolatedException(ReadDotNetString(result.ErrorMessage) ?? "The method call failed.");
+            }
+
+            if (result.ResultGCHandle == 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                if (result.ElementSize != Unsafe.SizeOf<T>())
+                {
+                    throw new IsolatedException(
+                        $"The guest returned {result.ElementSize}-byte array elements but {Unsafe.SizeOf<T>()}-byte elements were expected.");
+                }
+
+                if (result.Length == 0)
+                {
+                    return Array.Empty<T>();
+                }
+
+                var values = new T[result.Length];
+                var byteCount = checked(result.Length * result.ElementSize);
+                _memory.GetSpan<byte>(result.Data, byteCount).CopyTo(MemoryMarshal.AsBytes(values.AsSpan()));
+                return values;
             }
             finally
             {
