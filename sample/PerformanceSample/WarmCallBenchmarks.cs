@@ -228,6 +228,102 @@ internal static class WarmCallBenchmarks
         return new Measurement("Isolated warm-runtime generic List<int>[1024] return", options.PayloadIterations, elapsed);
     }
 
+    public static Measurement MeasureIsolatedDoubleArrayPayloadCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.ReturnDoubles), 0);
+
+        var sum = 0.0;
+        for (var i = 0; i < 3; i++)
+        {
+            var values = method.Invoke<double[]>(target);
+            sum += values.Length + values[^1];
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.PayloadIterations; i++)
+            {
+                var values = method.Invoke<double[]>(target);
+                sum += values.Length + values[^1];
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume((long)sum);
+        return new Measurement(
+            $"Isolated warm-runtime generic double[{BenchmarkTarget.BlittableArrayLength}] return",
+            options.PayloadIterations,
+            elapsed);
+    }
+
+    public static Measurement MeasureIsolatedLongArrayPayloadCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.ReturnLongs), 0);
+
+        long sum = 0;
+        for (var i = 0; i < 3; i++)
+        {
+            var values = method.Invoke<long[]>(target);
+            sum += values.Length + values[^1];
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.PayloadIterations; i++)
+            {
+                var values = method.Invoke<long[]>(target);
+                sum += values.Length + values[^1];
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume(sum);
+        return new Measurement(
+            $"Isolated warm-runtime generic long[{BenchmarkTarget.BlittableArrayLength}] return",
+            options.PayloadIterations,
+            elapsed);
+    }
+
+    public static Measurement MeasureIsolatedDoubleArrayArgCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.SumDoubles), 1);
+        var payload = new double[BenchmarkTarget.BlittableArrayLength];
+        for (var i = 0; i < payload.Length; i++)
+        {
+            payload[i] = i * 0.25;
+        }
+
+        var sum = 0.0;
+        for (var i = 0; i < 3; i++)
+        {
+            sum += method.Invoke<double[], double>(target, payload);
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.PayloadIterations; i++)
+            {
+                sum += method.Invoke<double[], double>(target, payload);
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume((long)sum);
+        return new Measurement(
+            $"Isolated warm-runtime double[{BenchmarkTarget.BlittableArrayLength}] argument",
+            options.PayloadIterations,
+            elapsed);
+    }
+
     public static Measurement MeasureIsolatedTypedCallbackCalls(BenchmarkOptions options, bool useModuleCache)
     {
         using var host = CreateHost(options, useModuleCache);

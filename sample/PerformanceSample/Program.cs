@@ -44,6 +44,9 @@ internal static class Program
         var payloadResult = WarmCallBenchmarks.MeasureIsolatedPayloadCalls(options, useModuleCache: true);
         var objectPayloadResult = WarmCallBenchmarks.MeasureIsolatedObjectPayloadCalls(options, useModuleCache: true);
         var listPayloadResult = WarmCallBenchmarks.MeasureIsolatedListPayloadCalls(options, useModuleCache: true);
+        var doubleArrayResult = WarmCallBenchmarks.MeasureIsolatedDoubleArrayPayloadCalls(options, useModuleCache: true);
+        var longArrayResult = WarmCallBenchmarks.MeasureIsolatedLongArrayPayloadCalls(options, useModuleCache: true);
+        var doubleArrayArgResult = WarmCallBenchmarks.MeasureIsolatedDoubleArrayArgCalls(options, useModuleCache: true);
         var typedCallbackResult = WarmCallBenchmarks.MeasureIsolatedTypedCallbackCalls(options, useModuleCache: true);
         var rawCallbackResult = WarmCallBenchmarks.MeasureIsolatedRawCallbackCalls(options, useModuleCache: true);
         var noCacheStartup = StartupBenchmarks.MeasureStartup(options, useModuleCache: false, clearCacheBeforeEachSample: false);
@@ -82,6 +85,9 @@ internal static class Program
         PrintResult(payloadResult);
         PrintResult(objectPayloadResult);
         PrintResult(listPayloadResult);
+        PrintResult(doubleArrayResult);
+        PrintResult(longArrayResult);
+        PrintResult(doubleArrayArgResult);
         PrintResult(typedCallbackResult);
         PrintResult(rawCallbackResult);
 

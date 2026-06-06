@@ -38,6 +38,8 @@ The sample measures:
   member serialization and deserialization
 * an isolated warm-runtime `List<int>` return call that exercises generic
   collection serialization and deserialization
+* isolated warm-runtime large `double[]` and `long[]` return calls and a large
+  `double[]` argument call that exercise the generalized blittable bulk codec
 * isolated warm-runtime typed and raw host-callback calls
 * startup medians without the module cache, with a cold module cache, and with a
   warm module cache
@@ -174,10 +176,18 @@ The following paths were tested and kept:
   written by direct enumeration instead of staging through `Cast().ToArray()`,
   and deserializing non-array collections now fills the destination `List<T>`
   directly instead of first building an array.
-* Bulk primitive collection codec: exact `int[]` and `List<int>` payloads use a
-  compact count-plus-bytes format instead of writing each element through the
-  recursive nullable value path. The host still receives new arrays/lists that
-  are copied out of guest memory.
+* Bulk primitive collection codec: arrays and lists whose element type is a
+  blittable primitive (`bool`, `sbyte`, `byte`, `short`, `ushort`, `char`,
+  `int`, `uint`, `long`, `ulong`, `float`, `double`) use a compact
+  marker-plus-kind-plus-bytes format instead of writing each element through the
+  recursive nullable value path. The codec is symmetric and bidirectional: it is
+  compiled into both the host and the guest, so it accelerates collection
+  arguments and return values in both directions. A whole array is now read and
+  written as one contiguous little-endian memory block instead of one virtual
+  reader/writer call per element, which is the dominant cost for large payloads
+  inside the interpreted guest runtime. The host still receives new arrays/lists
+  that are copied out of guest memory, and a big-endian host falls back to the
+  per-element path. This generalizes the earlier `int`-only codec.
 * Compact object-member codec: object payloads write members positionally in the
   cached serializer order instead of writing each member name and
   assembly-qualified member type. Deserialization uses the expected member
@@ -350,6 +360,14 @@ Interpretation:
   same `List<int>[1024]` return from about `20.3 us` at `HEAD` to about
   `8.1 us`, and the generic object return from about `11.0 us` to about
   `8.9 us`, using a payload-heavy close comparison.
+* Generalizing the bulk primitive collection codec to every blittable element
+  type removed the per-element catastrophe for wide arrays. With a `32768`
+  element payload and `--payload-iterations 30`, a `double[]` return dropped from
+  about `31.911 ms` to about `218.070 us` (about `146x`), a `long[]` return from
+  about `30.018 ms` to about `216.013 us` (about `139x`), and a `double[]`
+  argument from about `33.248 ms` to about `548.793 us` (about `61x`). The ratio
+  grows with array length because the old path cost scales with element count
+  while the new path scales with bytes copied.
 * Removing the duplicate host-side raw callback argument copy reduced a clean
   A/B sample for a raw 64 KiB host callback from about `88.4 us` at `HEAD` to
   about `70.7 us`. The callback result buffer is now also released by the guest
