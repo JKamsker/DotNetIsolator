@@ -287,33 +287,37 @@ Representative run with
 
 ```text
 Steady-state call overhead
-Direct host Increment: total 90.446 ms, mean 1.809 ns
-Isolated warm-runtime Increment: total 189.174 ms, mean 189.174 ns
-Isolated warm-runtime public Invoke Increment: total 223.235 ms, mean 223.235 ns
-Isolated/direct mean ratio: 105x
+Direct host Increment: total 86.938 ms, mean 1.739 ns
+Isolated warm-runtime Increment: total 171.357 ms, mean 171.357 ns
+Isolated warm-runtime public Invoke Increment: total 250.893 ms, mean 250.893 ns
+Isolated/direct mean ratio: 99x
 
 Additional warm-call overhead
-Isolated warm-runtime zero-arg int return: total 3.314 ms, mean 165.715 ns
-Isolated warm-runtime generic byte[4096] return: total 0.770 ms, mean 1.540 us
-Isolated warm-runtime generic object return: total 11.910 ms, mean 23.820 us
-Isolated warm-runtime generic List<int>[1024] return: total 17.295 ms, mean 34.590 us
+Isolated warm-runtime zero-arg int return: total 4.204 ms, mean 210.200 ns
+Isolated warm-runtime void call: total 3.608 ms, mean 180.410 ns
+Isolated warm-runtime int void call: total 146.819 ms, mean 146.819 ns
+Isolated warm-runtime generic byte[4096] return: total 0.759 ms, mean 1.518 us
+Isolated warm-runtime generic object return: total 10.072 ms, mean 20.144 us
+Isolated warm-runtime generic List<int>[1024] return: total 10.775 ms, mean 21.550 us
+Isolated warm-runtime typed host callback: total 6,216.301 ms, mean 6.216 us
+Isolated warm-runtime raw byte[65536] host callback: total 34.050 ms, mean 68.100 us
 
 Startup medians
-No module cache: host 306.585 ms, runtime 35.151 ms, object 565.800 us, method 98.700 us, first call 52.600 us
-Cold module cache: host 336.528 ms, runtime 39.198 ms, object 566.600 us, method 97.300 us, first call 55.800 us
-Warm module cache: host 1.956 ms, runtime 45.217 ms, object 696.400 us, method 132.100 us, first call 92.500 us
-Warm host: runtime 36.998 ms, object 547.600 us, method 101.100 us, first call 53.600 us
-Runtime memory snapshot preload: 82.265 ms
-Warm runtime memory snapshot: runtime 3.096 ms, object 626.600 us, method 103.700 us, first call 61.600 us
+No module cache: host 289.494 ms, runtime 35.167 ms, object 847.600 us, method 108.800 us, first call 50.400 us
+Cold module cache: host 336.418 ms, runtime 35.285 ms, object 850.100 us, method 99.500 us, first call 51.400 us
+Warm module cache: host 1.427 ms, runtime 40.519 ms, object 801.600 us, method 94.400 us, first call 55.500 us
+Warm host: runtime 36.264 ms, object 816.400 us, method 99.100 us, first call 50.200 us
+Runtime memory snapshot preload: 73.612 ms
+Warm runtime memory snapshot: runtime 2.873 ms, object 908.200 us, method 115.700 us, first call 65.700 us
 
 Concurrent host construction
-Warm module cache parallel host construction (16 hosts): total 13.929 ms, mean 870.569 us
+Warm module cache parallel host construction (16 hosts): total 13.440 ms, mean 839.994 us
 ```
 
 Interpretation:
 
-* A representative warm isolated scalar call is around `189 ns` on this machine,
-  versus about `1.8 ns` for the direct host call. That is roughly `105x` slower
+* A representative warm isolated scalar call is around `171 ns` on this machine,
+  versus about `1.7 ns` for the direct host call. That is roughly `99x` slower
   for this tiny method.
 * Before the scalar fast path, the same benchmark measured about `37 us` per
   isolated call and about `21,000x` direct-call overhead on this machine. The
@@ -322,7 +326,7 @@ Interpretation:
 * The zero-argument `int` return path now bypasses result serialization for
   exact `() -> int` methods. Before that fast path, nearby samples measured
   about `2.3-2.5 us`; the representative fast-path sample above is about
-  `220 ns`.
+  `210 ns`.
 * The native void paths reduced close A/B samples for exact `() -> void` calls
   from about `218 ns` at `HEAD` to about `139 ns`, and exact `int -> void`
   calls from about `25.7 us` to about `150 ns`.
@@ -336,12 +340,12 @@ Interpretation:
   `1.4-1.8 us`; the representative run above is about `1.5 us`.
 * The compact object-member codec reduced close A/B samples for the generic
   object return from about `61.7 us` at `HEAD` to about `20.9-21.4 us`; the
-  representative run above is about `23.8 us`.
+  representative run above is about `20.1 us`.
 * Direct collection serialization reduced close A/B samples for a
   `List<int>[1024]` return from about `738 us` to about `649-652 us`.
 * The bulk primitive collection codec then reduced close A/B samples for the
   same `List<int>[1024]` return from about `653.8 us` at `HEAD` to about
-  `28.8-29.2 us`; the representative run above is about `34.3 us`.
+  `28.8-29.2 us`; the representative run above is about `21.6 us`.
 * Caching serializer type-shape metadata then reduced a clean A/B sample for the
   same `List<int>[1024]` return from about `20.3 us` at `HEAD` to about
   `8.1 us`, and the generic object return from about `11.0 us` to about
@@ -350,11 +354,11 @@ Interpretation:
   A/B sample for a raw 64 KiB host callback from about `88.4 us` at `HEAD` to
   about `70.7 us`. The callback result buffer is now also released by the guest
   after copying/deserialization.
-* The warm module cache cuts host construction from about `311 ms` to about
-  `1.6 ms`, roughly a `198x` improvement for that phase in this run.
+* The warm module cache cuts host construction from about `289 ms` to about
+  `1.4 ms`, roughly a `203x` improvement for that phase in this run.
 * Unlocking warm module-cache hits reduced close A/B samples for 16 parallel
   warm-cache host constructions from about `21.8 ms` with the global lock to
-  about `13.2 ms`; the representative optimized run above is about `15.5 ms`.
+  about `13.2 ms`; the representative optimized run above is about `13.4 ms`.
 * The first cache miss is slower than no cache because it compiles and writes the
   serialized module. The cache is intended for repeated host construction.
 * Runtime startup on a warm host is still about `40-60 ms` because the .NET WASI
