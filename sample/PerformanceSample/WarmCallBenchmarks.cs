@@ -76,6 +76,41 @@ internal static class WarmCallBenchmarks
         return new Measurement("Isolated warm-runtime public Invoke Increment", options.IsolatedIterations, elapsed);
     }
 
+    public static Measurement MeasureIsolatedBatchCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.Increment), 1);
+
+        const int batchSize = 1024;
+        var args = new int[batchSize];
+        for (var i = 0; i < batchSize; i++)
+        {
+            args[i] = i;
+        }
+
+        long sum = 0;
+        for (var i = 0; i < 3; i++)
+        {
+            sum += method.InvokeBatch<int, int>(target, args)[batchSize - 1];
+        }
+
+        var batches = Math.Max(4, options.IsolatedIterations / batchSize);
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < batches; i++)
+            {
+                var results = method.InvokeBatch<int, int>(target, args);
+                sum += results[batchSize - 1];
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume(sum);
+        return new Measurement("Isolated warm-runtime batched int->int (per call)", batches * batchSize, elapsed);
+    }
+
     public static Measurement MeasureIsolatedDoubleScalarCalls(BenchmarkOptions options, bool useModuleCache)
     {
         using var host = CreateHost(options, useModuleCache);

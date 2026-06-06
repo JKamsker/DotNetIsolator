@@ -18,6 +18,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int, int, int, int, int> _lookupDotNetMethod;
     private readonly Func<int, int, int> _deserializeAsDotNetObject;
     private readonly Func<int, int, long, int, int, int, long> _invokeScalarMethod;
+    private readonly Action<int> _invokeScalarBatchMethod;
     private readonly Func<int, int, long> _invokeInt32MethodNoArgsPacked;
     private readonly Func<int, int, int, long> _invokeInt32MethodPacked;
     private readonly Func<int, int, int> _invokeVoidMethod;
@@ -74,6 +75,7 @@ public class IsolatedRuntime : IDisposable
         _invokeBlittableListMethod = exports.InvokeBlittableListMethod;
         _invokeBlittableArrayArgMethod = exports.InvokeBlittableArrayArgMethod;
         _invokeScalarMethod = exports.InvokeScalarMethod;
+        _invokeScalarBatchMethod = exports.InvokeScalarBatchMethod;
         _invokeDotNetMethod = exports.InvokeDotNetMethod;
         _releaseObject = exports.ReleaseObject;
 
@@ -293,6 +295,64 @@ public class IsolatedRuntime : IDisposable
         finally
         {
             errorParam.Pop();
+        }
+    }
+
+    // Batched primitive scalar invocation: runs the method once per argument in a single boundary
+    // crossing. The arguments are copied into one guest buffer and the results read back from one
+    // guest buffer, amortizing the host/guest boundary and host-side per-call overhead.
+    internal TRes[] InvokeScalarBatch<T0, TRes>(int monoMethodPtr, IsolatedObject? instance, ReadOnlySpan<T0> args, int argKind, int resultKind)
+        where T0 : unmanaged
+        where TRes : unmanaged
+    {
+        var count = args.Length;
+        if (count == 0)
+        {
+            return Array.Empty<TRes>();
+        }
+
+        var argsPtr = CopyValue<T0>(args, addLengthPrefix: false);
+        var resultsByteCount = checked(count * Unsafe.SizeOf<TRes>());
+        var resultsPtr = _malloc(resultsByteCount);
+        if (resultsPtr == 0)
+        {
+            _free(argsPtr);
+            throw new InvalidOperationException($"malloc failed when trying to allocate {resultsByteCount} bytes for batch results");
+        }
+
+        var len = Marshal.SizeOf<BatchInvocation>();
+        var wasmPtr = _shadowStack.PushFrame(len);
+        try
+        {
+            var invocationStruct = _memory.GetSpan(wasmPtr, len);
+            ref var invocation = ref MemoryMarshal.AsRef<BatchInvocation>(invocationStruct);
+            invocation = new BatchInvocation
+            {
+                Target = instance is null ? 0 : instance.GuestGCHandle,
+                MethodPtr = monoMethodPtr,
+                Args = argsPtr,
+                Count = count,
+                ArgKind = argKind,
+                ResultKind = resultKind,
+                Results = resultsPtr,
+            };
+
+            _invokeScalarBatchMethod(wasmPtr);
+
+            if (invocation.ErrorMessage != 0)
+            {
+                throw new IsolatedException(ReadDotNetString(invocation.ErrorMessage) ?? "The batch method call failed.");
+            }
+
+            var results = new TRes[count];
+            _memory.GetSpan<byte>(resultsPtr, resultsByteCount).CopyTo(MemoryMarshal.AsBytes(results.AsSpan()));
+            return results;
+        }
+        finally
+        {
+            _shadowStack.PopFrame(wasmPtr, len);
+            _free(resultsPtr);
+            _free(argsPtr);
         }
     }
 

@@ -266,6 +266,15 @@ The following paths were tested and kept:
   the object-graph (de)serialization on both sides. Other callback shapes keep
   using the general MessagePack path. It reduced the typed `(int) -> int`
   callback from about `9.5 us` to about `1.9 us` (about `5x`).
+* Batched primitive scalar invocation: `IsolatedMethod.InvokeBatch<T0, TRes>`
+  runs a primitive `(T0) -> TRes` method once per argument in a single
+  host/guest boundary crossing, reading the arguments from one contiguous guest
+  buffer and writing the results to another. It amortizes the per-call boundary
+  and host-side marshaling across the batch, so it suits tight loops of
+  independent primitive calls. A batched `int -> int` call measured about
+  `97 ns` versus about `190 ns` for the same call made one at a time (about
+  `2x`); the remaining cost is the per-element guest `mono_runtime_invoke`, which
+  batching cannot remove.
 
 ### Rejected
 

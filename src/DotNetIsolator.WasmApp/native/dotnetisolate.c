@@ -34,6 +34,17 @@ typedef struct BlittableArrayInvocationResult {
 	MonoString* error_msg;
 } BlittableArrayInvocationResult;
 
+typedef struct BatchInvocation {
+	MonoGCHandle target;
+	MonoMethod* method_ptr;
+	void* args; // contiguous arg_count * arg_size bytes (host-owned)
+	int count;
+	int arg_kind;
+	int result_kind;
+	void* results; // contiguous count * result_size bytes (host-owned)
+	MonoString* error_msg;
+} BatchInvocation;
+
 typedef struct BlittableArgInvocation {
 	MonoGCHandle target;
 	MonoMethod* method_ptr;
@@ -744,6 +755,74 @@ uint64_t dotnetisolator_invoke_scalar(MonoGCHandle target, MonoMethod* method_pt
 	uint64_t result_bits = 0;
 	memcpy(&result_bits, mono_object_unbox(result_object), kind_size(result_kind));
 	return result_bits;
+}
+
+// Batched primitive scalar invocation. Runs the same (T) -> TRes or () -> TRes method once per
+// element in a single boundary crossing: reads each argument from a contiguous host-provided buffer,
+// invokes the method, and writes each result to a contiguous result buffer. The signature is
+// validated once. This amortizes the host/guest boundary and host-side per-call overhead across the
+// whole batch.
+__attribute__((export_name("dotnetisolator_invoke_scalar_batch")))
+void dotnetisolator_invoke_scalar_batch(BatchInvocation* invocation) {
+	invocation->error_msg = NULL;
+
+	MonoMethod* method_ptr = invocation->method_ptr;
+	int arg_kind = invocation->arg_kind;
+	int result_kind = invocation->result_kind;
+	int count = invocation->count;
+
+	MonoMethodSignature* signature = mono_method_signature(method_ptr);
+	int expected_params = arg_kind == 0 ? 0 : 1;
+	if ((int)mono_signature_get_param_count(signature) != expected_params) {
+		invocation->error_msg = mono_string_new_wrapper("The method does not match the requested batch scalar signature (parameter count).");
+		return;
+	}
+
+	if (arg_kind != 0) {
+		void* iterator = NULL;
+		MonoType* parameter_type = mono_signature_get_params(signature, &iterator);
+		if (!mono_type_matches_kind(parameter_type, arg_kind)) {
+			invocation->error_msg = mono_string_new_wrapper("The method does not match the requested batch scalar argument type.");
+			return;
+		}
+	}
+
+	MonoType* return_type = mono_signature_get_return_type(signature);
+	if (!mono_type_matches_kind(return_type, result_kind)) {
+		invocation->error_msg = mono_string_new_wrapper("The method does not match the requested batch scalar return type.");
+		return;
+	}
+
+	int arg_size = kind_size(arg_kind);
+	int result_size = kind_size(result_kind);
+	MonoObject* target_object = invocation->target ? mono_gchandle_get_target((uint32_t)invocation->target) : 0;
+	char* args_bytes = (char*)invocation->args;
+	char* results_bytes = (char*)invocation->results;
+
+	for (int i = 0; i < count; i++) {
+		void* method_params[1];
+		void** method_params_ptr = NULL;
+		if (arg_kind != 0) {
+			method_params[0] = args_bytes + (size_t)i * (size_t)arg_size;
+			method_params_ptr = method_params;
+		}
+
+		MonoObject* exc = NULL;
+		MonoObject* result_object = mono_runtime_invoke(method_ptr, target_object, method_params_ptr, &exc);
+
+		if (exc) {
+			MonoObject* ignored_tostring_exception;
+			invocation->error_msg = mono_object_to_string(exc, &ignored_tostring_exception);
+			return;
+		}
+
+		if (!result_object) {
+			invocation->error_msg = mono_string_new_wrapper("A batch scalar call returned null instead of a value type.");
+			return;
+		}
+
+		memcpy(results_bytes + (size_t)i * (size_t)result_size, mono_object_unbox(result_object), result_size);
+	}
 }
 
 __attribute__((export_name("dotnetisolator_invoke_void")))

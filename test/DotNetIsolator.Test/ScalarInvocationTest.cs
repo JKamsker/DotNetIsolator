@@ -82,6 +82,51 @@ public sealed class ScalarInvocationTest : IDisposable
     }
 
     [Fact]
+    public void CanBatchInvokeIntToInt()
+    {
+        var obj = _runtime.CreateObject<Target>();
+        var method = obj.FindMethod(nameof(Target.Triple), 1);
+        var results = method.InvokeBatch<int, int>(obj, new[] { 1, 2, 3, 4, 5 });
+        Assert.Equal(new[] { 3, 6, 9, 12, 15 }, results);
+    }
+
+    [Fact]
+    public void CanBatchInvokeDoubleToDouble()
+    {
+        var obj = _runtime.CreateObject<Target>();
+        var method = obj.FindMethod(nameof(Target.Scale), 1);
+        var results = method.InvokeBatch<double, double>(obj, new[] { 1.0, 2.0, 4.0 });
+        Assert.Equal(new[] { 2.5, 5.0, 10.0 }, results);
+    }
+
+    [Fact]
+    public void CanBatchInvokeLargeLosslessly()
+    {
+        var obj = _runtime.CreateObject<Target>();
+        var method = obj.FindMethod(nameof(Target.Triple), 1);
+        var args = new int[2048];
+        for (var i = 0; i < args.Length; i++)
+        {
+            args[i] = i;
+        }
+
+        var results = method.InvokeBatch<int, int>(obj, args);
+        Assert.Equal(2048, results.Length);
+        for (var i = 0; i < results.Length; i++)
+        {
+            Assert.Equal(i * 3, results[i]);
+        }
+    }
+
+    [Fact]
+    public void EmptyBatchReturnsEmpty()
+    {
+        var obj = _runtime.CreateObject<Target>();
+        var method = obj.FindMethod(nameof(Target.Triple), 1);
+        Assert.Empty(method.InvokeBatch<int, int>(obj, ReadOnlySpan<int>.Empty));
+    }
+
+    [Fact]
     public void ThrowsWhenScalarSignatureMismatches()
     {
         // The guest validates the requested kinds against the real signature: NegateDouble is
@@ -114,5 +159,9 @@ public sealed class ScalarInvocationTest : IDisposable
         public double IntToDouble(int value) => value + 0.5;
 
         public int DoubleToInt(double value) => (int)value;
+
+        public int Triple(int value) => value * 3;
+
+        public double Scale(double value) => value * 2.5;
     }
 }

@@ -334,4 +334,24 @@ public class IsolatedMethod
 
     public void InvokeVoid<T0, T1, T2, T3, T4>(IsolatedObject? instance, T0 param0, T1 param1, T2 param2, T3 param3, T4 param4)
         => Invoke<T0, T1, T2, T3, T4, object>(instance, param0, param1, param2, param3, param4);
+
+    /// <summary>
+    /// Invokes this method once per supplied argument in a single host/guest boundary crossing and
+    /// returns the results in order. The argument and result types must be blittable primitives.
+    /// This amortizes the per-call boundary and host-side marshaling cost across the whole batch,
+    /// so it is most useful for tight loops of independent primitive calls.
+    /// </summary>
+    public TRes[] InvokeBatch<T0, TRes>(IsolatedObject? instance, ReadOnlySpan<T0> args)
+        where T0 : unmanaged
+        where TRes : unmanaged
+    {
+        var argKind = PrimitiveScalarCodec.GetKind(typeof(T0));
+        var resultKind = PrimitiveScalarCodec.GetKind(typeof(TRes));
+        if (argKind == PrimitiveScalarCodec.None || resultKind == PrimitiveScalarCodec.None)
+        {
+            throw new ArgumentException("InvokeBatch requires blittable primitive argument and result types.");
+        }
+
+        return _runtimeInstance.InvokeScalarBatch<T0, TRes>(_monoMethodPtr, instance, args, argKind, resultKind);
+    }
 }
