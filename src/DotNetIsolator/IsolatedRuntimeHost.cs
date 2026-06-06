@@ -54,6 +54,7 @@ public class IsolatedRuntimeHost : IDisposable
 
         Linker.DefineWasi();
         AddIsolatedImports();
+        WasiPreview2PollHost.DefineImports(Linker);
         WasiPreview2Shim.DefineMissingImports(Linker, Module);
         _assemblyLoaders.Add(LoadAssemblyFromWasmBcl);
     }

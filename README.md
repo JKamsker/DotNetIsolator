@@ -261,7 +261,7 @@ Object methods that return `Task`, `Task<T>`, `ValueTask`, or `ValueTask<T>` can
 int result = await isolatedObject.InvokeAsync<int>("ComputeAsync", 123);
 ```
 
-This supports cooperative async continuations inside the isolated runtime, for example `await Task.Yield()` and async chains that complete by posting back to the isolated scheduler. It does not currently provide a host-backed timer, I/O, or ThreadPool event source, so awaits such as `Task.Delay`, async file/network APIs, or `Task.Run` are not expected to make progress.
+This pumps the isolated WASI event loop on the invoking host thread, so continuations, `Task.Run`, `ThreadPool.QueueUserWorkItem`, and timer-backed awaits such as `Task.Delay` can make progress. The WASI runtime is still single-threaded, so thread-pool work is cooperative rather than parallel. Async file/network APIs remain limited by the WASI imports that DotNetIsolator hosts.
 
 ## Calling the host from the guest
 

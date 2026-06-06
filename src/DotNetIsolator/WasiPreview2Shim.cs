@@ -56,7 +56,8 @@ internal static class WasiPreview2Shim
     }
 
     private static bool ShouldDefineImport(FunctionImport functionImport)
-        => functionImport.ModuleName.StartsWith(ImportPrefix, StringComparison.Ordinal)
+        => (!WasiPreview2PollHost.IsSupportedImport(functionImport)
+            && functionImport.ModuleName.StartsWith(ImportPrefix, StringComparison.Ordinal))
             || IsAdapterBadFileDescriptorImport(functionImport);
 
     private static bool IsAdapterBadFileDescriptorImport(FunctionImport functionImport)

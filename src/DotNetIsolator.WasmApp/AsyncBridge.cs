@@ -2,13 +2,17 @@ using System.Reflection;
 
 namespace DotNetIsolator.WasmApp;
 
-#pragma warning disable IL2075
+#pragma warning disable IL2026, IL2075
 // This bridge reflects only over BCL Task<T>/ValueTask<T> members. DotNetIsolator already relies on
 // dynamic type serialization and is not trim-safe for arbitrary isolated application code.
 public static class AsyncBridge
 {
+    private static readonly Action<Task> PumpTask = CreateTaskPump();
+
     public static void EnsureInstalled()
-        => IsolatorSynchronizationContext.Install();
+    {
+        _ = PumpTask;
+    }
 
     public static object? Complete(object? value)
     {
@@ -42,15 +46,43 @@ public static class AsyncBridge
 
     private static object? CompleteTask(Task task)
     {
-        IsolatorSynchronizationContext.RunUntilCompleted(task);
+        if (!task.IsCompleted)
+        {
+            PumpUntilCompleted(task);
+        }
 
         var taskType = FindGenericTaskType(task.GetType());
         if (taskType is null || IsVoidTaskResult(taskType.GetGenericArguments()[0]))
         {
+            task.GetAwaiter().GetResult();
             return null;
         }
 
+        task.GetAwaiter().GetResult();
         return taskType.GetProperty(nameof(Task<object>.Result))!.GetValue(task);
+    }
+
+    private static void PumpUntilCompleted(Task task)
+    {
+        try
+        {
+            PumpTask(task);
+        }
+        catch (AggregateException ex) when (task.IsFaulted && ReferenceEquals(task.Exception, ex))
+        {
+            return;
+        }
+    }
+
+    private static Action<Task> CreateTaskPump()
+    {
+        var eventLoopType = Type.GetType("System.Threading.WasiEventLoop, System.Private.CoreLib")
+            ?? throw new PlatformNotSupportedException("The WASI async event loop is not available.");
+        var pumpMethod = eventLoopType.GetMethod(
+            "PollWasiEventLoopUntilResolvedVoid",
+            BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(eventLoopType.FullName, "PollWasiEventLoopUntilResolvedVoid");
+        return pumpMethod.CreateDelegate<Action<Task>>();
     }
 
     private static Type? FindGenericTaskType(Type? type)
@@ -71,4 +103,4 @@ public static class AsyncBridge
     private static bool IsVoidTaskResult(Type type)
         => type.FullName == "System.Threading.Tasks.VoidTaskResult";
 }
-#pragma warning restore IL2075
+#pragma warning restore IL2026, IL2075
