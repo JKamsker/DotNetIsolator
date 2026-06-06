@@ -1,5 +1,6 @@
 using DotNetIsolator.Guest;
 using MessagePack;
+using System.Buffers;
 using System.Text;
 using DotNetIsolator.Internal;
 
@@ -80,10 +81,24 @@ public static class DotNetIsolatorHost
             ResultKind = resultKind,
         };
 
-        var nameBytes = Encoding.UTF8.GetBytes(callbackName);
-        fixed (byte* namePtr = nameBytes)
+        var nameByteCount = Encoding.UTF8.GetByteCount(callbackName);
+        const int stackThreshold = 256;
+        var rented = nameByteCount > stackThreshold ? ArrayPool<byte>.Shared.Rent(nameByteCount) : null;
+        try
         {
-            Interop.CallHostScalar(namePtr, nameBytes.Length, &invocation);
+            Span<byte> nameBytes = rented is not null ? rented.AsSpan(0, nameByteCount) : stackalloc byte[nameByteCount];
+            Encoding.UTF8.GetBytes(callbackName, nameBytes);
+            fixed (byte* namePtr = nameBytes)
+            {
+                Interop.CallHostScalar(namePtr, nameByteCount, &invocation);
+            }
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
         }
 
         if (invocation.Error != 0)
