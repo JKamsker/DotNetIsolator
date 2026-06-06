@@ -8,6 +8,7 @@ public sealed class BenchmarkTarget
     private readonly byte[] _buffer = CreateBuffer(4096);
     private readonly byte[] _largeBuffer = CreateBuffer(64 * 1024);
     private readonly List<int> _numbers = CreateNumbers();
+    private int _consumedValue;
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public int Increment(int value)
@@ -16,6 +17,17 @@ public sealed class BenchmarkTarget
     [MethodImpl(MethodImplOptions.NoInlining)]
     public int ReturnFixedValue()
         => 42;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public void Noop()
+    {
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public void ConsumeInt(int value)
+    {
+        _consumedValue = value;
+    }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public byte[] ReturnBuffer()

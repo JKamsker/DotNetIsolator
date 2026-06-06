@@ -18,6 +18,8 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int> _deserializeAsDotNetObject;
     private readonly Func<int, int, long> _invokeInt32MethodNoArgsPacked;
     private readonly Func<int, int, int, long> _invokeInt32MethodPacked;
+    private readonly Func<int, int, int> _invokeVoidMethod;
+    private readonly Func<int, int, int, int> _invokeVoidMethodInt32;
     private readonly Action<int, int, int> _invokeByteArrayMethod;
     private readonly Action<int> _invokeDotNetMethod;
     private readonly Action<int> _releaseObject;
@@ -43,6 +45,8 @@ public class IsolatedRuntime : IDisposable
         _deserializeAsDotNetObject = exports.DeserializeAsDotNetObject;
         _invokeInt32MethodNoArgsPacked = exports.InvokeInt32MethodNoArgsPacked;
         _invokeInt32MethodPacked = exports.InvokeInt32MethodPacked;
+        _invokeVoidMethod = exports.InvokeVoidMethod;
+        _invokeVoidMethodInt32 = exports.InvokeVoidMethodInt32;
         _invokeByteArrayMethod = exports.InvokeByteArrayMethod;
         _invokeDotNetMethod = exports.InvokeDotNetMethod;
         _releaseObject = exports.ReleaseObject;
@@ -232,6 +236,25 @@ public class IsolatedRuntime : IDisposable
         return UnpackInt32MethodResult(packedResult);
     }
 
+    internal void InvokeVoidMethod(int monoMethodPtr, IsolatedObject? instance)
+    {
+        var errorMessagePtr = _invokeVoidMethod(
+            instance is null ? 0 : instance.GuestGCHandle,
+            monoMethodPtr);
+
+        UnpackVoidMethodResult(errorMessagePtr);
+    }
+
+    internal void InvokeVoidMethod(int monoMethodPtr, IsolatedObject? instance, int arg0)
+    {
+        var errorMessagePtr = _invokeVoidMethodInt32(
+            instance is null ? 0 : instance.GuestGCHandle,
+            monoMethodPtr,
+            arg0);
+
+        UnpackVoidMethodResult(errorMessagePtr);
+    }
+
     internal byte[]? InvokeByteArrayMethod(int monoMethodPtr, IsolatedObject? instance)
     {
         var len = Marshal.SizeOf<ByteArrayInvocationResult>();
@@ -287,6 +310,14 @@ public class IsolatedRuntime : IDisposable
         }
 
         return unchecked((int)packedResult);
+    }
+
+    private void UnpackVoidMethodResult(int errorMessagePtr)
+    {
+        if (errorMessagePtr != 0)
+        {
+            throw new IsolatedException(ReadDotNetString(errorMessagePtr) ?? "The method call failed.");
+        }
     }
 
     internal TRes InvokeDotNetMethod<TRes>(int monoMethodPtr, IsolatedObject? instance, ReadOnlySpan<int> argAddresses)

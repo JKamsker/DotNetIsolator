@@ -30,6 +30,8 @@ The sample measures:
   method, including the public method lookup path.
 * an isolated warm-runtime zero-argument `int` return call that uses the scalar
   result fast path
+* isolated warm-runtime `void` calls that use the exact-signature native void
+  fast paths
 * an isolated warm-runtime 4 KiB `byte[]` return call that exercises generic
   payload serialization and deserialization
 * an isolated warm-runtime object return call that exercises generic object
@@ -149,6 +151,10 @@ The following paths were tested and kept:
   bypasses object-graph serialization for exact `() -> byte[]` methods. The
   guest array is pinned only while the host copies the bytes into a new host
   array, then the guest handle is released.
+* Native void invoke paths: `IsolatedMethod.InvokeVoid` and
+  `IsolatedMethod.InvokeVoid<int>` bypass object-graph serialization for exact
+  `() -> void` and `int -> void` methods while keeping native signature
+  validation.
 * Arity-aware public method lookup cache: `IsolatedObject.FindMethod` now passes
   the requested argument count into the runtime lookup, caches successful
   lookups on the object, and the runtime cache key includes the declaring type
@@ -303,6 +309,9 @@ Interpretation:
   exact `() -> int` methods. Before that fast path, nearby samples measured
   about `2.3-2.5 us`; the representative fast-path sample above is about
   `220 ns`.
+* The native void paths reduced close A/B samples for exact `() -> void` calls
+  from about `218 ns` at `HEAD` to about `139 ns`, and exact `int -> void`
+  calls from about `25.7 us` to about `150 ns`.
 * The public `IsolatedObject.Invoke` path remains slower than reusing an
   `IsolatedMethod`, but the object-local method cache reduced close A/B samples
   from about `306 ns` to about `267-277 ns` for repeated public scalar calls.

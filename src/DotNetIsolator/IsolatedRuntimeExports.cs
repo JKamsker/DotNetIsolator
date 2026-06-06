@@ -14,6 +14,8 @@ internal sealed class IsolatedRuntimeExports
         Action<int, int, int> invokeByteArrayMethod,
         Func<int, int, long> invokeInt32MethodNoArgsPacked,
         Func<int, int, int, long> invokeInt32MethodPacked,
+        Func<int, int, int> invokeVoidMethod,
+        Func<int, int, int, int> invokeVoidMethodInt32,
         Action<int> invokeDotNetMethod,
         Action<int> releaseObject,
         Action start)
@@ -27,6 +29,8 @@ internal sealed class IsolatedRuntimeExports
         InvokeByteArrayMethod = invokeByteArrayMethod;
         InvokeInt32MethodNoArgsPacked = invokeInt32MethodNoArgsPacked;
         InvokeInt32MethodPacked = invokeInt32MethodPacked;
+        InvokeVoidMethod = invokeVoidMethod;
+        InvokeVoidMethodInt32 = invokeVoidMethodInt32;
         InvokeDotNetMethod = invokeDotNetMethod;
         ReleaseObject = releaseObject;
         Start = start;
@@ -41,6 +45,8 @@ internal sealed class IsolatedRuntimeExports
     public Action<int, int, int> InvokeByteArrayMethod { get; }
     public Func<int, int, long> InvokeInt32MethodNoArgsPacked { get; }
     public Func<int, int, int, long> InvokeInt32MethodPacked { get; }
+    public Func<int, int, int> InvokeVoidMethod { get; }
+    public Func<int, int, int, int> InvokeVoidMethodInt32 { get; }
     public Action<int> InvokeDotNetMethod { get; }
     public Action<int> ReleaseObject { get; }
     public Action Start { get; }
@@ -65,6 +71,10 @@ internal sealed class IsolatedRuntimeExports
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_i32_packed'");
         var invokeInt32MethodPacked = instance.GetFunction<int, int, int, long>("dotnetisolator_invoke_i32_i32_packed")
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_i32_i32_packed'");
+        var invokeVoidMethod = instance.GetFunction<int, int, int>("dotnetisolator_invoke_void")
+            ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_void'");
+        var invokeVoidMethodInt32 = instance.GetFunction<int, int, int, int>("dotnetisolator_invoke_i32_void")
+            ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_i32_void'");
         var invokeDotNetMethod = instance.GetAction<int>("dotnetisolator_invoke_method")
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_method'");
         var releaseObject = instance.GetAction<int>("dotnetisolator_release_object")
@@ -82,6 +92,8 @@ internal sealed class IsolatedRuntimeExports
             invokeByteArrayMethod,
             invokeInt32MethodNoArgsPacked,
             invokeInt32MethodPacked,
+            invokeVoidMethod,
+            invokeVoidMethodInt32,
             invokeDotNetMethod,
             releaseObject,
             start);

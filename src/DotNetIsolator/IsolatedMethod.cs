@@ -157,10 +157,18 @@ public class IsolatedMethod
     }
 
     public void InvokeVoid(IsolatedObject? instance)
-        => Invoke<object>(instance);
+        => _runtimeInstance.InvokeVoidMethod(_monoMethodPtr, instance);
 
     public void InvokeVoid<T0>(IsolatedObject? instance, T0 param0)
-        => Invoke<T0, object>(instance, param0);
+    {
+        if (typeof(T0) == typeof(int))
+        {
+            _runtimeInstance.InvokeVoidMethod(_monoMethodPtr, instance, (int)(object)param0!);
+            return;
+        }
+
+        Invoke<T0, object>(instance, param0);
+    }
 
     public void InvokeVoid<T0, T1>(IsolatedObject? instance, T0 param0, T1 param1)
         => Invoke<T0, T1, object>(instance, param0, param1);

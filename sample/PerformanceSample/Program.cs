@@ -39,6 +39,8 @@ internal static class Program
         var isolatedResult = WarmCallBenchmarks.MeasureIsolatedCalls(options, useModuleCache: true);
         var publicInvokeResult = WarmCallBenchmarks.MeasureIsolatedPublicInvokeCalls(options, useModuleCache: true);
         var zeroArgResult = WarmCallBenchmarks.MeasureIsolatedZeroArgIntCalls(options, useModuleCache: true);
+        var voidResult = WarmCallBenchmarks.MeasureIsolatedVoidCalls(options, useModuleCache: true);
+        var intVoidResult = WarmCallBenchmarks.MeasureIsolatedIntVoidCalls(options, useModuleCache: true);
         var payloadResult = WarmCallBenchmarks.MeasureIsolatedPayloadCalls(options, useModuleCache: true);
         var objectPayloadResult = WarmCallBenchmarks.MeasureIsolatedObjectPayloadCalls(options, useModuleCache: true);
         var listPayloadResult = WarmCallBenchmarks.MeasureIsolatedListPayloadCalls(options, useModuleCache: true);
@@ -75,6 +77,8 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine("Additional warm-call overhead");
         PrintResult(zeroArgResult);
+        PrintResult(voidResult);
+        PrintResult(intVoidResult);
         PrintResult(payloadResult);
         PrintResult(objectPayloadResult);
         PrintResult(listPayloadResult);

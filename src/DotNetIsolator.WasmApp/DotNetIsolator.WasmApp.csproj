@@ -41,6 +41,8 @@
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_i32_packed" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_i32_i32" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_i32_i32_packed" />
+		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_void" />
+		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_i32_void" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_method" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_lookup_method" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_release_object" />

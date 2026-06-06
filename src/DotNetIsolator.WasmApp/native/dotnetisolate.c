@@ -116,6 +116,28 @@ int method_signature_is_i32(MonoMethod* method) {
 		&& mono_type_get_type(return_type) == MONO_TYPE_I4;
 }
 
+int method_signature_is_void(MonoMethod* method) {
+	MonoMethodSignature* signature = mono_method_signature(method);
+	MonoType* return_type = mono_signature_get_return_type(signature);
+
+	return mono_signature_get_param_count(signature) == 0
+		&& mono_type_get_type(return_type) == MONO_TYPE_VOID;
+}
+
+int method_signature_is_i32_void(MonoMethod* method) {
+	MonoMethodSignature* signature = mono_method_signature(method);
+	if (mono_signature_get_param_count(signature) != 1) {
+		return 0;
+	}
+
+	void* iterator = NULL;
+	MonoType* parameter_type = mono_signature_get_params(signature, &iterator);
+	MonoType* return_type = mono_signature_get_return_type(signature);
+
+	return mono_type_get_type(parameter_type) == MONO_TYPE_I4
+		&& mono_type_get_type(return_type) == MONO_TYPE_VOID;
+}
+
 int method_signature_is_byte_array(MonoMethod* method) {
 	MonoMethodSignature* signature = mono_method_signature(method);
 	if (mono_signature_get_param_count(signature) != 0) {
@@ -271,6 +293,47 @@ static int invoke_i32(MonoGCHandle target, MonoMethod* method_ptr, int* result, 
 	return 1;
 }
 
+static int invoke_void(MonoGCHandle target, MonoMethod* method_ptr, MonoString** error_msg) {
+	*error_msg = NULL;
+
+	if (!method_signature_is_void(method_ptr)) {
+		return fail_with_message("The method does not have the required () -> void signature.", error_msg);
+	}
+
+	MonoObject* exc = NULL;
+	MonoObject* target_object = target ? mono_gchandle_get_target((uint32_t)target) : 0;
+	mono_runtime_invoke(method_ptr, target_object, NULL, &exc);
+
+	if (exc) {
+		MonoObject* ignored_tostring_exception;
+		*error_msg = mono_object_to_string(exc, &ignored_tostring_exception);
+		return 0;
+	}
+
+	return 1;
+}
+
+static int invoke_i32_void(MonoGCHandle target, MonoMethod* method_ptr, int arg0, MonoString** error_msg) {
+	*error_msg = NULL;
+
+	if (!method_signature_is_i32_void(method_ptr)) {
+		return fail_with_message("The method does not have the required int -> void signature.", error_msg);
+	}
+
+	void* method_params[] = { &arg0 };
+	MonoObject* exc = NULL;
+	MonoObject* target_object = target ? mono_gchandle_get_target((uint32_t)target) : 0;
+	mono_runtime_invoke(method_ptr, target_object, method_params, &exc);
+
+	if (exc) {
+		MonoObject* ignored_tostring_exception;
+		*error_msg = mono_object_to_string(exc, &ignored_tostring_exception);
+		return 0;
+	}
+
+	return 1;
+}
+
 static void invoke_byte_array(MonoGCHandle target, MonoMethod* method_ptr, ByteArrayInvocationResult* result) {
 	result->data = NULL;
 	result->length = 0;
@@ -342,6 +405,26 @@ uint64_t dotnetisolator_invoke_i32_i32_packed(MonoGCHandle target, MonoMethod* m
 	}
 
 	return (uint32_t)result;
+}
+
+__attribute__((export_name("dotnetisolator_invoke_void")))
+uint32_t dotnetisolator_invoke_void(MonoGCHandle target, MonoMethod* method_ptr) {
+	MonoString* error_msg = NULL;
+	if (!invoke_void(target, method_ptr, &error_msg)) {
+		return error_msg ? (uint32_t)(uintptr_t)error_msg : 1;
+	}
+
+	return 0;
+}
+
+__attribute__((export_name("dotnetisolator_invoke_i32_void")))
+uint32_t dotnetisolator_invoke_i32_void(MonoGCHandle target, MonoMethod* method_ptr, int arg0) {
+	MonoString* error_msg = NULL;
+	if (!invoke_i32_void(target, method_ptr, arg0, &error_msg)) {
+		return error_msg ? (uint32_t)(uintptr_t)error_msg : 1;
+	}
+
+	return 0;
 }
 
 __attribute__((export_name("dotnetisolator_deserialize_object")))

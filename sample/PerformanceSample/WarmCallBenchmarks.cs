@@ -102,6 +102,52 @@ internal static class WarmCallBenchmarks
         return new Measurement("Isolated warm-runtime zero-arg int return", options.ZeroArgIterations, elapsed);
     }
 
+    public static Measurement MeasureIsolatedVoidCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.Noop), 0);
+
+        for (var i = 0; i < 10; i++)
+        {
+            method.InvokeVoid(target);
+        }
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.ZeroArgIterations; i++)
+            {
+                method.InvokeVoid(target);
+            }
+        });
+
+        target.ReleaseGCHandle();
+        return new Measurement("Isolated warm-runtime void call", options.ZeroArgIterations, elapsed);
+    }
+
+    public static Measurement MeasureIsolatedIntVoidCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.ConsumeInt), 1);
+
+        for (var i = 0; i < 10; i++)
+        {
+            method.InvokeVoid<int>(target, i);
+        }
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.IsolatedIterations; i++)
+            {
+                method.InvokeVoid<int>(target, i);
+            }
+        });
+
+        target.ReleaseGCHandle();
+        return new Measurement("Isolated warm-runtime int void call", options.IsolatedIterations, elapsed);
+    }
+
     public static Measurement MeasureIsolatedPayloadCalls(BenchmarkOptions options, bool useModuleCache)
     {
         using var host = CreateHost(options, useModuleCache);

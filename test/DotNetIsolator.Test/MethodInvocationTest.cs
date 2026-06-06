@@ -19,6 +19,25 @@ public class MethodInvocationTest : IDisposable
         => _runtime.CreateObject<TestClass>().InvokeVoid("PrivateVoidMethod");
 
     [Fact]
+    public void CanInvokeIntParamVoidMethod()
+    {
+        var obj = _runtime.CreateObject<TestClass>();
+
+        obj.InvokeVoid<int>(nameof(TestClass.StoreInt), 123);
+
+        Assert.Equal(123, obj.Invoke<int>(nameof(TestClass.GetStoredInt)));
+    }
+
+    [Fact]
+    public void VoidFastPathRejectsWrongSignature()
+    {
+        var obj = _runtime.CreateObject<TestClass>();
+
+        var ex = Assert.Throws<IsolatedException>(() => obj.InvokeVoid(nameof(TestClass.IntMethod)));
+        Assert.Equal("The method does not have the required () -> void signature.", ex.Message);
+    }
+
+    [Fact]
     public void CanInvokeParameterlessIntMethod()
         => Assert.Equal(123, _runtime.CreateObject<TestClass>().Invoke<int>(nameof(TestClass.IntMethod)));
 
@@ -188,9 +207,19 @@ public class MethodInvocationTest : IDisposable
 
     class TestClass
     {
+        private int _storedInt;
+
         private void PrivateVoidMethod()
         {
         }
+
+        public void StoreInt(int value)
+        {
+            _storedInt = value;
+        }
+
+        public int GetStoredInt()
+            => _storedInt;
 
         public int IntMethod()
             => 123;
