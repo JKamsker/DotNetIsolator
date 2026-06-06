@@ -25,6 +25,12 @@ internal static class ObjectGraphSerializer
         return ReadTypedValue(reader, depth: 0);
     }
 
+    public static object? DeserializeWithType(Stream stream)
+    {
+        using var reader = new BinaryReader(stream, Encoding, leaveOpen: true);
+        return ReadTypedValue(reader, depth: 0);
+    }
+
     public static byte[] Serialize(Type declaredType, object? value)
     {
         using var stream = new MemoryStream();

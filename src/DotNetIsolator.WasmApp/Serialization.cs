@@ -6,12 +6,9 @@ public static class Serialization
 {
     public static unsafe object? Deserialize(byte* value, int valueLength)
     {
-        // Instead of using ToArray (or UnmanagedMemoryStream) you could have a pool of byte[]
-        // buffers on the guest side and have the host serialize directly into their memory, then
-        // there would be no allocations on either side, and this code could work with a Memory<byte>
-        // for whatever region within one of those buffers.
-        var memoryCopy = new Span<byte>(value, valueLength).ToArray();
-        return Deserialize(memoryCopy);
+        // Read directly from guest memory instead of copying the whole argument into a managed array.
+        using var stream = new UnmanagedMemoryStream(value, valueLength);
+        return MessagePackCompatibility.DeserializeTypeless(stream);
     }
 
     internal static unsafe object? Deserialize(Memory<byte> value)

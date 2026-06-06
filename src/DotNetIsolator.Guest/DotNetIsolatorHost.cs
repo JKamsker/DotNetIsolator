@@ -111,10 +111,16 @@ public static class DotNetIsolatorHost
     }
 
     private static byte[]?[] SerializeArgs(object[] args)
-        => args.Select(a => a is null
-            ? null
-            : MessagePackCompatibility.SerializeObject(a.GetType(), a))
-            .ToArray();
+    {
+        var result = new byte[args.Length][];
+        for (var i = 0; i < args.Length; i++)
+        {
+            var arg = args[i];
+            result[i] = arg is null ? null : MessagePackCompatibility.SerializeObject(arg.GetType(), arg);
+        }
+
+        return result;
+    }
 
     private static GuestToHostCall CreateCall(string callbackName, byte[]?[] args, bool isRawCall)
         => new()

@@ -215,9 +215,18 @@ public class IsolatedRuntime : IDisposable
 
     public IsolatedMethod GetMethod(string assemblyName, string? @namespace, string? declaringTypeName, string typeName, string methodName, int numArgs = -1)
     {
+        var key = (assemblyName, @namespace, declaringTypeName, typeName, methodName, numArgs);
+
+        // Fast path: avoid allocating the GetOrAdd factory closure on cache hits (the common case,
+        // e.g. every lambda invocation re-looks-up its method).
+        if (_methodLookupCache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
         // Consider a multilevel cache keyed first by type so that successive "GetMethod" calls on the same type
         // don't have to hash so many strings. Also handle lookup failures in a better way.
-        return _methodLookupCache.GetOrAdd((assemblyName, @namespace, declaringTypeName, typeName, methodName, numArgs), info =>
+        return _methodLookupCache.GetOrAdd(key, info =>
         {
             // All these CopyValue strings are freed inside the C code
             var monoClassName = info.DeclaringTypeName is null ? info.TypeName : $"{info.DeclaringTypeName}/{info.TypeName}";
