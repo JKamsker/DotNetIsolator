@@ -206,19 +206,22 @@ The following paths were tested and kept:
 * Native blittable-list return path: `IsolatedMethod.Invoke<List<T>>` for any
   blittable primitive element type returns a pointer to the list's backing array
   (`_items`) for its live element count (`_size`), read through mono metadata,
-  and the host copies the elements once into a new `List<T>`. This bypasses the
-  managed serialize/deserialize round-trip for the common `() -> List<T>` shape,
-  reusing the array fast path's result transport. `List<T>`'s field layout has
-  been stable for many years; if the expected fields are absent the call fails
-  rather than guessing.
+  and the host copies the elements directly into a new `List<T>` backing store.
+  This bypasses the managed serialize/deserialize round-trip for the common
+  `() -> List<T>` shape, reusing the array fast path's result transport without
+  staging through a temporary host array. `List<T>`'s field layout has been
+  stable for many years; if the expected fields are absent the call fails rather
+  than guessing.
 * Native blittable-array argument path: `IsolatedMethod.Invoke<T[], TRes>` for
   any blittable primitive element type sends the raw element bytes into a guest
   buffer once, and the guest materializes the managed array directly with
   `mono_array_new` plus a single `memcpy` instead of deserializing it through the
   object-graph path. The return value still flows through the normal result
-  serialization, so any return type is supported, and a `null` array falls back
-  to the managed path so `null` is preserved. This is the argument-direction
-  counterpart of the native array-return path.
+  serialization, so any return type is supported; the host deserializes that
+  result directly from guest memory and releases the guest handle even if
+  deserialization fails. A `null` array falls back to the managed path so `null`
+  is preserved. This is the argument-direction counterpart of the native
+  array-return path.
 * Native void invoke paths: `IsolatedMethod.InvokeVoid` and
   `IsolatedMethod.InvokeVoid<int>` bypass object-graph serialization for exact
   `() -> void` and `int -> void` methods while keeping native signature
@@ -238,10 +241,12 @@ The following paths were tested and kept:
   array-backed `ReadOnlyMemory<byte>`, the object-graph serializer now reads
   directly from that array instead of copying it into a second array first. It
   still copies non-array-backed memory before parsing.
-* Direct collection serialization: collection payloads with a known `Count` are
-  written by direct enumeration instead of staging through `Cast().ToArray()`,
-  and deserializing non-array collections now fills the destination `List<T>`
-  directly instead of first building an array.
+* Direct collection serialization: collection and dictionary payloads are
+  written by direct enumeration instead of staging through `Cast().ToArray()`.
+  Known-count collections write the count up front; other enumerable fallbacks
+  reserve the count field in the seekable serialization stream and patch it
+  after enumeration. Deserializing non-array primitive collections now fills the
+  destination `List<T>` directly instead of first building an array.
 * Bulk primitive collection codec: arrays and lists whose element type is a
   blittable primitive (`bool`, `sbyte`, `byte`, `short`, `ushort`, `char`,
   `int`, `uint`, `long`, `ulong`, `float`, `double`) use a compact
@@ -282,14 +287,16 @@ The following paths were tested and kept:
   using the general MessagePack path. It reduced the typed `(int) -> int`
   callback from about `9.5 us` to about `1.9 us` (about `5x`).
 * Copy-free generic deserialization: the host now deserializes a generic call's
-  result, and a guest callback's invocation envelope, directly from guest linear
-  memory (via `UnmanagedMemoryStream` and an `UnmanagedMemoryManager`) instead of
-  first copying the payload into a managed array. The object-graph serializer
-  also reuses one `MemoryStream`/`BinaryWriter` per thread instead of allocating
-  and regrowing a buffer on every serialize. These remove per-call allocations on
-  the generic fallback paths (the native fast paths already avoid them for the
-  common shapes). Eliminating the envelope copy reduced the raw `byte[65536]`
-  host callback from about `93 us` to about `73 us` (about `15-20%`).
+  result, a blittable-array argument call's generic result, a guest callback's
+  invocation envelope, and non-raw guest callback results directly from guest or
+  host-owned unmanaged memory (via `UnmanagedMemoryStream` and an
+  `UnmanagedMemoryManager`) instead of first copying the payload into a managed
+  array. The object-graph serializer also reuses one
+  `MemoryStream`/`BinaryWriter` per thread instead of allocating and regrowing a
+  buffer on every serialize. These remove per-call allocations on the generic
+  fallback paths (the native fast paths already avoid them for the common
+  shapes). Eliminating the envelope copy reduced the raw `byte[65536]` host
+  callback from about `93 us` to about `73 us` (about `15-20%`).
 * Batched primitive scalar invocation: `IsolatedMethod.InvokeBatch<T0, TRes>`
   runs a primitive `(T0) -> TRes` method once per argument in a single
   host/guest boundary crossing, reading the arguments from one contiguous guest

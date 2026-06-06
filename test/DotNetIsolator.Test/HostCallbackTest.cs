@@ -75,6 +75,36 @@ public class HostCallbackTest : IDisposable
     }
 
     [Fact]
+    public void CanGetCustomCollectionResult()
+    {
+        _runtime.RegisterCallback("numbers", () => (ICollection<int>)new NumberCollection(1, 2, 3, 4));
+
+        var result = _runtime.Invoke(() => DotNetIsolatorHost.Invoke<ICollection<int>>("numbers").ToArray());
+
+        Assert.Equal(new[] { 1, 2, 3, 4 }, result);
+    }
+
+    [Fact]
+    public void CanGetReadOnlyDictionaryResult()
+    {
+        _runtime.RegisterCallback("map", () =>
+            (IReadOnlyDictionary<string, int>)new System.Collections.ObjectModel.ReadOnlyDictionary<string, int>(
+                new Dictionary<string, int>
+                {
+                    ["alpha"] = 1,
+                    ["beta"] = 2,
+                }));
+
+        var result = _runtime.Invoke(() =>
+            DotNetIsolatorHost.Invoke<IReadOnlyDictionary<string, int>>("map")
+                .OrderBy(item => item.Key)
+                .Select(item => $"{item.Key}:{item.Value}")
+                .ToArray());
+
+        Assert.Equal(new[] { "alpha:1", "beta:2" }, result);
+    }
+
+    [Fact]
     public void GetErrorIfCallbackNameIsUnknown()
     {
         var message = _runtime.Invoke(() =>
@@ -123,5 +153,40 @@ public class HostCallbackTest : IDisposable
     {
         public string? Name { get; set; }
         public int Age { get; set; }
+    }
+
+    private sealed class NumberCollection : ICollection<int>
+    {
+        private readonly int[] _values;
+
+        public NumberCollection(params int[] values)
+        {
+            _values = values;
+        }
+
+        public int Count => _values.Length;
+
+        public bool IsReadOnly => true;
+
+        public void Add(int item)
+            => throw new NotSupportedException();
+
+        public void Clear()
+            => throw new NotSupportedException();
+
+        public bool Contains(int item)
+            => _values.Contains(item);
+
+        public void CopyTo(int[] array, int arrayIndex)
+            => _values.CopyTo(array, arrayIndex);
+
+        public IEnumerator<int> GetEnumerator()
+            => ((IEnumerable<int>)_values).GetEnumerator();
+
+        public bool Remove(int item)
+            => throw new NotSupportedException();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+            => GetEnumerator();
     }
 }

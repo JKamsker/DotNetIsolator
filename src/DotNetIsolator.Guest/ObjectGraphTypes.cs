@@ -12,6 +12,7 @@ internal static class ObjectGraphTypes
     private static readonly ConcurrentDictionary<Type, SerializableMember[]> MemberCache = new();
     private static readonly ConcurrentDictionary<Type, DictionaryShape> DictionaryShapeCache = new();
     private static readonly ConcurrentDictionary<Type, CollectionShape> CollectionShapeCache = new();
+    private static readonly ConcurrentDictionary<Type, DictionaryEntryAccessors> DictionaryEntryAccessorCache = new();
 
     public static SerializableMember[] GetSerializableMembers(Type type)
         => MemberCache.GetOrAdd(type, CreateSerializableMembers);
@@ -59,6 +60,9 @@ internal static class ObjectGraphTypes
     public static object CreateObject(Type type)
         => Activator.CreateInstance(type, nonPublic: true)
             ?? throw new InvalidOperationException($"Could not create an instance of '{type.FullName}'.");
+
+    public static DictionaryEntryAccessors GetDictionaryEntryAccessors(Type entryType)
+        => DictionaryEntryAccessorCache.GetOrAdd(entryType, CreateDictionaryEntryAccessors);
 
     private static Type? FindGenericInterface(Type type, Type genericTypeDefinition)
     {
@@ -121,6 +125,13 @@ internal static class ObjectGraphTypes
             .ToArray();
     }
 
+    private static DictionaryEntryAccessors CreateDictionaryEntryAccessors(Type entryType)
+        => new(
+            entryType.GetProperty("Key", BindingFlags.Instance | BindingFlags.Public)
+                ?? throw new InvalidOperationException($"Dictionary entry type '{entryType.FullName}' does not expose a Key property."),
+            entryType.GetProperty("Value", BindingFlags.Instance | BindingFlags.Public)
+                ?? throw new InvalidOperationException($"Dictionary entry type '{entryType.FullName}' does not expose a Value property."));
+
     private readonly struct DictionaryShape
     {
         public static readonly DictionaryShape NotDictionary = new(false, typeof(object), typeof(object));
@@ -153,6 +164,24 @@ internal static class ObjectGraphTypes
 
         public Type ElementType { get; }
     }
+}
+
+internal readonly struct DictionaryEntryAccessors
+{
+    private readonly PropertyInfo _keyProperty;
+    private readonly PropertyInfo _valueProperty;
+
+    public DictionaryEntryAccessors(PropertyInfo keyProperty, PropertyInfo valueProperty)
+    {
+        _keyProperty = keyProperty;
+        _valueProperty = valueProperty;
+    }
+
+    public object? GetKey(object entry)
+        => _keyProperty.GetValue(entry);
+
+    public object? GetValue(object entry)
+        => _valueProperty.GetValue(entry);
 }
 
 internal sealed class SerializableMember

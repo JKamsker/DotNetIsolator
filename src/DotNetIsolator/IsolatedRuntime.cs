@@ -441,8 +441,58 @@ public class IsolatedRuntime : IDisposable
     // returns a pointer to the list's backing-array storage for its live element count.
     internal List<T>? InvokeBlittableListMethod<T>(int monoMethodPtr, IsolatedObject? instance) where T : unmanaged
     {
-        var values = InvokeBlittableSequence<T>(_invokeBlittableListMethod, monoMethodPtr, instance);
-        return values is null ? null : new List<T>(values);
+        var len = Marshal.SizeOf<BlittableArrayInvocationResult>();
+        var wasmPtr = _shadowStack.PushFrame(len);
+        try
+        {
+            var resultStruct = _memory.GetSpan(wasmPtr, len);
+            ref var result = ref MemoryMarshal.AsRef<BlittableArrayInvocationResult>(resultStruct);
+            result = default;
+
+            _invokeBlittableListMethod(
+                wasmPtr,
+                instance is null ? 0 : instance.GuestGCHandle,
+                monoMethodPtr);
+
+            if (result.ErrorMessage != 0)
+            {
+                throw new IsolatedException(ReadDotNetString(result.ErrorMessage) ?? "The method call failed.");
+            }
+
+            if (result.ResultGCHandle == 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                if (result.Length == 0)
+                {
+                    return new List<T>(0);
+                }
+
+                if (result.ElementSize != Unsafe.SizeOf<T>())
+                {
+                    throw new IsolatedException(
+                        $"The guest returned {result.ElementSize}-byte elements but {Unsafe.SizeOf<T>()}-byte elements were expected.");
+                }
+
+                var values = new List<T>(result.Length);
+                CollectionsMarshal.SetCount(values, result.Length);
+                var byteCount = checked(result.Length * result.ElementSize);
+                _memory.GetSpan<byte>(result.Data, byteCount)
+                    .CopyTo(MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(values)));
+                return values;
+            }
+            finally
+            {
+                ReleaseGCHandle(result.ResultGCHandle);
+            }
+        }
+        finally
+        {
+            _shadowStack.PopFrame(wasmPtr, len);
+        }
     }
 
     private T[]? InvokeBlittableSequence<T>(Action<int, int, int> invokeExport, int monoMethodPtr, IsolatedObject? instance) where T : unmanaged
@@ -534,12 +584,22 @@ public class IsolatedRuntime : IDisposable
                 return default!;
             }
 
-            var resultBytes = _memory
-                .GetSpan(invocation.ResultSerialized, invocation.ResultSerializedLength)
-                .ToArray();
-            var result = MessagePackCompatibility.DeserializeObject<TRes>(resultBytes)!;
-            ReleaseGCHandle(invocation.ResultSerializedGCHandle);
-            return result;
+            try
+            {
+                var resultSpan = _memory.GetSpan(invocation.ResultSerialized, invocation.ResultSerializedLength);
+                unsafe
+                {
+                    fixed (byte* resultPtr = resultSpan)
+                    {
+                        using var resultStream = new UnmanagedMemoryStream(resultPtr, resultSpan.Length);
+                        return MessagePackCompatibility.DeserializeObject<TRes>(resultStream)!;
+                    }
+                }
+            }
+            finally
+            {
+                ReleaseGCHandle(invocation.ResultSerializedGCHandle);
+            }
         }
         finally
         {

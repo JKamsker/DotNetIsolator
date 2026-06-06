@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -15,6 +16,8 @@ namespace DotNetIsolator.Internal;
 // on the wire format.
 internal static class ObjectGraphPrimitiveCollections
 {
+    private const int StackBufferByteThreshold = 1024;
+
     // Written in place of a normal element count to mark a bulk primitive blob. A real
     // element count is always >= 0, so a negative sentinel is unambiguous.
     private const int PrimitiveBlobMarker = -1;
@@ -108,13 +111,61 @@ internal static class ObjectGraphPrimitiveCollections
 
         if (value is ICollection<T> collection)
         {
-            var buffer = new T[collection.Count];
-            collection.CopyTo(buffer, 0);
-            WriteBlob(writer, kind, buffer);
+            WriteCollectionBlob(writer, kind, collection);
             return true;
         }
 
         return false;
+    }
+
+    private static void WriteCollectionBlob<T>(BinaryWriter writer, Kind kind, ICollection<T> collection) where T : unmanaged
+    {
+        var count = collection.Count;
+        EnsureCount(count);
+        if (count == 0)
+        {
+            WriteBlob(writer, kind, ReadOnlySpan<T>.Empty);
+            return;
+        }
+
+        var byteCount = checked(count * Unsafe.SizeOf<T>());
+        if (byteCount <= StackBufferByteThreshold)
+        {
+            Span<T> buffer = stackalloc T[count];
+            CopyCollectionTo(collection, buffer);
+            WriteBlob(writer, kind, buffer);
+            return;
+        }
+
+        var rented = ArrayPool<T>.Shared.Rent(count);
+        try
+        {
+            collection.CopyTo(rented, 0);
+            WriteBlob(writer, kind, rented.AsSpan(0, count));
+        }
+        finally
+        {
+            ArrayPool<T>.Shared.Return(rented);
+        }
+    }
+
+    private static void CopyCollectionTo<T>(IEnumerable<T> collection, Span<T> destination)
+    {
+        var index = 0;
+        foreach (var item in collection)
+        {
+            if ((uint)index >= (uint)destination.Length)
+            {
+                throw new InvalidOperationException("Collection count changed during serialization.");
+            }
+
+            destination[index++] = item;
+        }
+
+        if (index != destination.Length)
+        {
+            throw new InvalidOperationException("Collection count changed during serialization.");
+        }
     }
 
     private static void WriteBlob<T>(BinaryWriter writer, Kind kind, ReadOnlySpan<T> values) where T : unmanaged
@@ -133,25 +184,43 @@ internal static class ObjectGraphPrimitiveCollections
                 $"Primitive collection element kind {actualKind} does not match the expected element type '{typeof(T)}'.");
         }
 
-        var values = count == 0 ? Array.Empty<T>() : new T[count];
-        if (count > 0)
+        if (collectionType.IsArray)
         {
-            var destination = MemoryMarshal.AsBytes(values.AsSpan());
-            reader.BaseStream.ReadExactly(destination);
-
-            if (!BitConverter.IsLittleEndian && Unsafe.SizeOf<T>() > 1)
-            {
-                ReverseElementBytes<T>(values);
-            }
+            var values = count == 0 ? Array.Empty<T>() : new T[count];
+            ReadBlittableValues(reader, values);
+            return values;
         }
 
-        return collectionType.IsArray ? values : new List<T>(values);
+        var list = new List<T>(count);
+        if (count > 0)
+        {
+            CollectionsMarshal.SetCount(list, count);
+            ReadBlittableValues(reader, CollectionsMarshal.AsSpan(list));
+        }
+
+        return list;
     }
 
-    private static void ReverseElementBytes<T>(T[] values) where T : unmanaged
+    private static void ReadBlittableValues<T>(BinaryReader reader, Span<T> values) where T : unmanaged
+    {
+        if (values.Length == 0)
+        {
+            return;
+        }
+
+        var destination = MemoryMarshal.AsBytes(values);
+        reader.BaseStream.ReadExactly(destination);
+
+        if (!BitConverter.IsLittleEndian && Unsafe.SizeOf<T>() > 1)
+        {
+            ReverseElementBytes(values);
+        }
+    }
+
+    private static void ReverseElementBytes<T>(Span<T> values) where T : unmanaged
     {
         var size = Unsafe.SizeOf<T>();
-        var bytes = MemoryMarshal.AsBytes(values.AsSpan());
+        var bytes = MemoryMarshal.AsBytes(values);
         for (var offset = 0; offset < bytes.Length; offset += size)
         {
             bytes.Slice(offset, size).Reverse();

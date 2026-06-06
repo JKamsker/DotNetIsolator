@@ -112,7 +112,12 @@ public static class DotNetIsolatorHost
 
     private static byte[]?[] SerializeArgs(object[] args)
     {
-        var result = new byte[args.Length][];
+        if (args.Length == 0)
+        {
+            return Array.Empty<byte[]?>();
+        }
+
+        var result = new byte[]?[args.Length];
         for (var i = 0; i < args.Length; i++)
         {
             var arg = args[i];
@@ -143,11 +148,18 @@ public static class DotNetIsolatorHost
                 var result = hasResult ? new Span<byte>(resultPtr, resultLength) : default;
                 if (success)
                 {
-                    return !readResult || !hasResult
-                        ? default!
-                        : callInfo.IsRawCall
-                            ? (T)(object)result.ToArray()
-                            : MessagePackCompatibility.DeserializeObject<T>(result.ToArray())!;
+                    if (!readResult || !hasResult)
+                    {
+                        return default!;
+                    }
+
+                    if (callInfo.IsRawCall)
+                    {
+                        return (T)(object)result.ToArray();
+                    }
+
+                    using var resultStream = new UnmanagedMemoryStream((byte*)resultPtr, resultLength);
+                    return MessagePackCompatibility.DeserializeObject<T>(resultStream)!;
                 }
                 else
                 {
