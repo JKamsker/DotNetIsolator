@@ -352,6 +352,19 @@ static int simple_member_kind(MonoType* type) {
 	}
 }
 
+static int is_managed_primitive_special(MonoClass* klass) {
+	const char* ns = mono_class_get_namespace(klass);
+	const char* name = mono_class_get_name(klass);
+	if (ns == NULL || name == NULL || strcmp(ns, "System") != 0) {
+		return 0;
+	}
+
+	return strcmp(name, "DateTime") == 0
+		|| strcmp(name, "TimeSpan") == 0
+		|| strcmp(name, "Guid") == 0
+		|| strcmp(name, "Decimal") == 0;
+}
+
 // Computes the UTF-8 byte length of a UTF-16 sequence using the same replacement-on-lone-surrogate
 // behavior as .NET's default UTF8Encoding, so the bytes match BinaryWriter.Write(string).
 static int utf16_to_utf8_length(const uint16_t* chars, int char_count) {
@@ -520,6 +533,9 @@ static int try_native_serialize_object(MonoObject* value, void** out_data, int* 
 	MonoType* klass_type = mono_class_get_type(klass);
 	if (simple_member_kind(klass_type) != 0) {
 		return 0; // boxed primitive or string
+	}
+	if (is_managed_primitive_special(klass)) {
+		return 0; // managed ObjectGraphPrimitives owns these wire formats
 	}
 
 	if (cached_ienumerable_class == NULL) {

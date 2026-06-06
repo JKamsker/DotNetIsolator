@@ -278,14 +278,19 @@ The following paths were tested and kept:
 * Host callback dispatch cleanup: callback registration now caches parameter and
   return type metadata, raw `byte[]` callbacks use the deserialized host-owned
   argument arrays directly instead of cloning them again, and guest callback
-  result buffers are freed after the guest copies or deserializes them.
+  result buffers are freed after the guest copies or deserializes them. The
+  guest-side callback envelope now rents the serialized-argument array and
+  carries the logical argument count separately, so `ArrayPool<T>` buffers are
+  safe even when the rented array is larger than the callback arity.
 * Scalar callback fast path: `DotNetIsolatorHost.Invoke<TRes>(name, arg)` for a
   callback whose single argument (if any) and result are blittable primitives
   travels bit-packed through a small invocation struct in guest memory via a
   dedicated `call_host_scalar` host import, skipping the MessagePack envelope and
-  the object-graph (de)serialization on both sides. Other callback shapes keep
-  using the general MessagePack path. It reduced the typed `(int) -> int`
-  callback from about `9.5 us` to about `1.9 us` (about `5x`).
+  the object-graph (de)serialization on both sides. The host caches a typed
+  scalar invoker at callback registration, so the scalar dispatch path does not
+  allocate a reflection argument array. Other callback shapes keep using the
+  general MessagePack path. It reduced the typed `(int) -> int` callback from
+  about `9.5 us` to about `1.9 us` (about `5x`).
 * Copy-free generic deserialization: the host now deserializes a generic call's
   result, a blittable-array argument call's generic result, a guest callback's
   invocation envelope, and non-raw guest callback results directly from guest or

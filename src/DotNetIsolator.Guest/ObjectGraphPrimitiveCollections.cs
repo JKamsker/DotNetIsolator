@@ -209,7 +209,7 @@ internal static class ObjectGraphPrimitiveCollections
         }
 
         var destination = MemoryMarshal.AsBytes(values);
-        reader.BaseStream.ReadExactly(destination);
+        ObjectGraphPrimitives.ReadExactly(reader, destination);
 
         if (!BitConverter.IsLittleEndian && Unsafe.SizeOf<T>() > 1)
         {

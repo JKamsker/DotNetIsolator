@@ -20,7 +20,7 @@ internal static class ObjectGraphPrimitives
         else if (type == typeof(byte[])) WriteBytes(writer, (byte[])value);
         else if (type == typeof(DateTime)) writer.Write(((DateTime)value).ToBinary());
         else if (type == typeof(TimeSpan)) writer.Write(((TimeSpan)value).Ticks);
-        else if (type == typeof(Guid)) WriteBytes(writer, ((Guid)value).ToByteArray());
+        else if (type == typeof(Guid)) WriteGuid(writer, (Guid)value);
         else if (type == typeof(decimal)) WriteDecimal(writer, (decimal)value);
         else return false;
 
@@ -45,7 +45,7 @@ internal static class ObjectGraphPrimitives
             : type == typeof(byte[]) ? reader.ReadBytes(reader.ReadInt32())
             : type == typeof(DateTime) ? DateTime.FromBinary(reader.ReadInt64())
             : type == typeof(TimeSpan) ? new TimeSpan(reader.ReadInt64())
-            : type == typeof(Guid) ? new Guid(reader.ReadBytes(16))
+            : type == typeof(Guid) ? ReadGuid(reader)
             : type == typeof(decimal) ? ReadDecimal(reader)
             : null;
 
@@ -58,14 +58,57 @@ internal static class ObjectGraphPrimitives
         writer.Write(value);
     }
 
+    private static void WriteGuid(BinaryWriter writer, Guid value)
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        if (!value.TryWriteBytes(bytes))
+        {
+            throw new InvalidOperationException("Could not serialize Guid bytes.");
+        }
+
+        writer.Write(bytes);
+    }
+
+    private static Guid ReadGuid(BinaryReader reader)
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        ReadExactly(reader, bytes);
+        return new Guid(bytes);
+    }
+
     private static void WriteDecimal(BinaryWriter writer, decimal value)
     {
-        foreach (var part in decimal.GetBits(value))
+        Span<int> parts = stackalloc int[4];
+        decimal.GetBits(value, parts);
+        foreach (var part in parts)
         {
             writer.Write(part);
         }
     }
 
     private static decimal ReadDecimal(BinaryReader reader)
-        => new(new[] { reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32() });
+    {
+        var lo = reader.ReadInt32();
+        var mid = reader.ReadInt32();
+        var hi = reader.ReadInt32();
+        var flags = reader.ReadInt32();
+        var isNegative = (flags & unchecked((int)0x80000000)) != 0;
+        var scale = (byte)((flags >> 16) & 0xFF);
+        return new decimal(lo, mid, hi, isNegative, scale);
+    }
+
+    internal static void ReadExactly(BinaryReader reader, Span<byte> destination)
+    {
+        var totalRead = 0;
+        while (totalRead < destination.Length)
+        {
+            var bytesRead = reader.Read(destination[totalRead..]);
+            if (bytesRead == 0)
+            {
+                throw new EndOfStreamException();
+            }
+
+            totalRead += bytesRead;
+        }
+    }
 }

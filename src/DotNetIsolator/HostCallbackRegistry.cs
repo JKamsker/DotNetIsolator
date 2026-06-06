@@ -1,5 +1,6 @@
 using DotNetIsolator.Internal;
 using MessagePack;
+using System.Reflection;
 using System.Text;
 
 namespace DotNetIsolator;
@@ -56,18 +57,25 @@ internal sealed class HostCallbackRegistry
             throw new InvalidOperationException($"There is no registered callback with name '{callbackName}'");
         }
 
-        var args = argKind == PrimitiveScalarCodec.None
-            ? Array.Empty<object?>()
-            : new[] { PrimitiveScalarCodec.Unpack(argBits, argKind) };
+        var result = callback.InvokeScalar(argBits, argKind, resultKind)
+            ?? throw new InvalidOperationException("The callback does not have a scalar-compatible signature.");
 
-        var result = callback.Delegate.DynamicInvoke(args)
-            ?? throw new InvalidOperationException("The scalar callback returned null.");
-
-        return PrimitiveScalarCodec.Pack(result, resultKind);
+        return result;
     }
 
     private static object?[] DeserializeArguments(Type[] parameterTypes, GuestToHostCall invocationInfo)
     {
+        if (invocationInfo.ArgsLength != parameterTypes.Length)
+        {
+            throw new InvalidOperationException(
+                $"Callback expected {parameterTypes.Length} argument(s), but the guest supplied {invocationInfo.ArgsLength}.");
+        }
+
+        if (parameterTypes.Length == 0)
+        {
+            return Array.Empty<object?>();
+        }
+
         var deserializedArgs = new object?[parameterTypes.Length];
         for (var i = 0; i < parameterTypes.Length; i++)
         {
@@ -113,11 +121,12 @@ internal readonly struct HostCallbackResponse
 
 internal sealed class RegisteredCallback
 {
-    private RegisteredCallback(Delegate callback, Type[] parameterTypes, Type returnType)
+    private RegisteredCallback(Delegate callback, Type[] parameterTypes, Type returnType, ScalarCallbackInvoker? scalarInvoker)
     {
         Delegate = callback;
         ParameterTypes = parameterTypes;
         ReturnType = returnType;
+        ScalarInvoker = scalarInvoker;
     }
 
     public Delegate Delegate { get; }
@@ -126,9 +135,89 @@ internal sealed class RegisteredCallback
 
     public Type ReturnType { get; }
 
+    private ScalarCallbackInvoker? ScalarInvoker { get; }
+
+    public long? InvokeScalar(long argBits, int argKind, int resultKind)
+        => ScalarInvoker?.Invoke(argBits, argKind, resultKind);
+
     public static RegisteredCallback Create(Delegate callback)
-        => new(
+    {
+        var parameterTypes = callback.Method.GetParameters().Select(p => p.ParameterType).ToArray();
+        return new RegisteredCallback(
             callback,
-            callback.Method.GetParameters().Select(p => p.ParameterType).ToArray(),
-            callback.Method.ReturnType);
+            parameterTypes,
+            callback.Method.ReturnType,
+            CreateScalarInvoker(callback, parameterTypes, callback.Method.ReturnType));
+    }
+
+    private static ScalarCallbackInvoker? CreateScalarInvoker(Delegate callback, Type[] parameterTypes, Type returnType)
+    {
+        if (PrimitiveScalarCodec.GetKind(returnType) == PrimitiveScalarCodec.None)
+        {
+            return null;
+        }
+
+        if (parameterTypes.Length == 0)
+        {
+            return CreateScalarInvokerFactory(returnType).Invoke(callback);
+        }
+
+        if (parameterTypes.Length == 1
+            && PrimitiveScalarCodec.GetKind(parameterTypes[0]) != PrimitiveScalarCodec.None)
+        {
+            return CreateScalarInvokerFactory(parameterTypes[0], returnType).Invoke(callback);
+        }
+
+        return null;
+    }
+
+    private static Func<Delegate, ScalarCallbackInvoker> CreateScalarInvokerFactory(Type resultType)
+        => typeof(RegisteredCallback)
+            .GetMethod(nameof(CreateZeroArgScalarInvoker), BindingFlags.Static | BindingFlags.NonPublic)!
+            .MakeGenericMethod(resultType)
+            .CreateDelegate<Func<Delegate, ScalarCallbackInvoker>>();
+
+    private static Func<Delegate, ScalarCallbackInvoker> CreateScalarInvokerFactory(Type argType, Type resultType)
+        => typeof(RegisteredCallback)
+            .GetMethod(nameof(CreateOneArgScalarInvoker), BindingFlags.Static | BindingFlags.NonPublic)!
+            .MakeGenericMethod(argType, resultType)
+            .CreateDelegate<Func<Delegate, ScalarCallbackInvoker>>();
+
+    private static ScalarCallbackInvoker CreateZeroArgScalarInvoker<TRes>(Delegate callback)
+    {
+        var typedCallback = callback as Func<TRes>
+            ?? callback.Method.CreateDelegate<Func<TRes>>(callback.Target);
+        var expectedResultKind = PrimitiveScalarCodec.GetKind(typeof(TRes));
+
+        return (_, argKind, resultKind) =>
+        {
+            if (argKind != PrimitiveScalarCodec.None || resultKind != expectedResultKind)
+            {
+                throw new InvalidOperationException("The scalar callback signature does not match the guest request.");
+            }
+
+            return PrimitiveScalarCodec.Pack(typedCallback()!, resultKind);
+        };
+    }
+
+    private static ScalarCallbackInvoker CreateOneArgScalarInvoker<TArg, TRes>(Delegate callback)
+    {
+        var typedCallback = callback as Func<TArg, TRes>
+            ?? callback.Method.CreateDelegate<Func<TArg, TRes>>(callback.Target);
+        var expectedArgKind = PrimitiveScalarCodec.GetKind(typeof(TArg));
+        var expectedResultKind = PrimitiveScalarCodec.GetKind(typeof(TRes));
+
+        return (argBits, argKind, resultKind) =>
+        {
+            if (argKind != expectedArgKind || resultKind != expectedResultKind)
+            {
+                throw new InvalidOperationException("The scalar callback signature does not match the guest request.");
+            }
+
+            var arg = (TArg)PrimitiveScalarCodec.Unpack(argBits, argKind);
+            return PrimitiveScalarCodec.Pack(typedCallback(arg)!, resultKind);
+        };
+    }
+
+    private delegate long ScalarCallbackInvoker(long argBits, int argKind, int resultKind);
 }

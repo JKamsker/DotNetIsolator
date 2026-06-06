@@ -9,7 +9,7 @@ namespace DotNetIsolator.Internal;
 internal static class MessagePackCompatibility
 {
     public static readonly MessagePackSerializerOptions GuestToHostCallOptions = CreateOptions(
-        CompositeResolver.Create(GeneratedResolver.Instance, BuiltinResolver.Instance));
+        CompositeResolver.Create(GuestToHostCallResolver.Instance, GeneratedResolver.Instance, BuiltinResolver.Instance));
 
     public static byte[] SerializeTypeless<T>(T value)
         => ObjectGraphSerializer.SerializeWithType(value);

@@ -13,8 +13,9 @@ public static class DotNetIsolatorHost
 
     public static void Invoke(string callbackName, params object[] args)
     {
+        using var serializedArgs = SerializeArgs(args);
         _ = PerformCall<object>(
-            CreateCall(callbackName, SerializeArgs(args), isRawCall: false),
+            CreateCall(callbackName, serializedArgs.Args, serializedArgs.Length, isRawCall: false),
             readResult: false);
     }
 
@@ -24,6 +25,7 @@ public static class DotNetIsolatorHost
         {
             CallbackName = callbackName,
             Args = args,
+            ArgsLength = args.Length,
             IsRawCall = true,
         });
     }
@@ -40,8 +42,9 @@ public static class DotNetIsolatorHost
 
         // Note that this overload won't work if the host is AOT compiled because it will be unable to
         // deserialize these arbitrary arg types. For that scenario, use the Memory<byte>[] overload instead.
+        using var serializedArgs = SerializeArgs(args);
         return PerformCall<T>(
-            CreateCall(callbackName, SerializeArgs(args), isRawCall: false),
+            CreateCall(callbackName, serializedArgs.Args, serializedArgs.Length, isRawCall: false),
             readResult: true);
     }
 
@@ -110,28 +113,37 @@ public static class DotNetIsolatorHost
         return true;
     }
 
-    private static byte[]?[] SerializeArgs(object[] args)
+    private static SerializedArgs SerializeArgs(object[] args)
     {
         if (args.Length == 0)
         {
-            return Array.Empty<byte[]?>();
+            return SerializedArgs.Empty;
         }
 
-        var result = new byte[]?[args.Length];
-        for (var i = 0; i < args.Length; i++)
+        var result = ArrayPool<byte[]?>.Shared.Rent(args.Length);
+        try
         {
-            var arg = args[i];
-            result[i] = arg is null ? null : MessagePackCompatibility.SerializeObject(arg.GetType(), arg);
-        }
+            for (var i = 0; i < args.Length; i++)
+            {
+                var arg = args[i];
+                result[i] = arg is null ? null : MessagePackCompatibility.SerializeObject(arg.GetType(), arg);
+            }
 
-        return result;
+            return new SerializedArgs(result, args.Length, isPooled: true);
+        }
+        catch
+        {
+            ArrayPool<byte[]?>.Shared.Return(result, clearArray: true);
+            throw;
+        }
     }
 
-    private static GuestToHostCall CreateCall(string callbackName, byte[]?[] args, bool isRawCall)
+    private static GuestToHostCall CreateCall(string callbackName, byte[]?[] args, int argsLength, bool isRawCall)
         => new()
         {
             CallbackName = callbackName,
             Args = args,
+            ArgsLength = argsLength,
             IsRawCall = isRawCall,
         };
 
@@ -173,6 +185,32 @@ public static class DotNetIsolatorHost
                 {
                     Interop.FreeHostCallResult(resultPtr);
                 }
+            }
+        }
+    }
+
+    private readonly struct SerializedArgs : IDisposable
+    {
+        public static readonly SerializedArgs Empty = new(Array.Empty<byte[]?>(), 0, isPooled: false);
+
+        public SerializedArgs(byte[]?[] args, int length, bool isPooled)
+        {
+            Args = args;
+            Length = length;
+            _isPooled = isPooled;
+        }
+
+        private readonly bool _isPooled;
+
+        public byte[]?[] Args { get; }
+
+        public int Length { get; }
+
+        public void Dispose()
+        {
+            if (_isPooled)
+            {
+                ArrayPool<byte[]?>.Shared.Return(Args, clearArray: true);
             }
         }
     }

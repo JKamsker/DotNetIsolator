@@ -1,15 +1,14 @@
-﻿using MessagePack;
-
 namespace DotNetIsolator.Internal;
 
 #pragma warning disable CS0649
 
-[MessagePackObject]
 public struct GuestToHostCall
 {
-    [Key(0)] public string CallbackName;
-    [Key(1)] public byte[]?[] Args;
-    [Key(2)] public bool IsRawCall; // Means the args aren't seralized - they are raw byte arrays
+    public string CallbackName;
+    public byte[]?[] Args;
+    public bool IsRawCall; // Means the args are not serialized - they are raw byte arrays.
+    // Args may be an oversized rented buffer; ArgsLength is the logical arity.
+    public int ArgsLength;
 }
 
 #pragma warning restore CS0649
