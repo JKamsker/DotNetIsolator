@@ -103,6 +103,51 @@ public sealed class BlittableCollectionInvocationTest : IDisposable
         Assert.Equal(payload, roundTripped);
     }
 
+    [Fact]
+    public void CanRoundTripIntArrayArgument()
+    {
+        var payload = new[] { 1, 2, 3, 4, 5 };
+        var sum = _runtime.CreateObject<Target>()
+            .Invoke<int[], int>(nameof(Target.SumInts), payload);
+
+        Assert.Equal(15, sum);
+    }
+
+    [Fact]
+    public void CanPassEmptyArrayArgument()
+    {
+        var sum = _runtime.CreateObject<Target>()
+            .Invoke<double[], double>(nameof(Target.SumDoubles), Array.Empty<double>());
+
+        Assert.Equal(0.0, sum);
+    }
+
+    [Fact]
+    public void NullArrayArgumentIsPreserved()
+    {
+        var length = _runtime.CreateObject<Target>()
+            .Invoke<double[], int>(nameof(Target.CountOrMinusOne), null!);
+
+        Assert.Equal(-1, length);
+    }
+
+    [Fact]
+    public void CanRoundTripLargeDoubleArrayArgument()
+    {
+        var payload = new double[4096];
+        var expected = 0.0;
+        for (var i = 0; i < payload.Length; i++)
+        {
+            payload[i] = i * 0.5;
+            expected += payload[i];
+        }
+
+        var sum = _runtime.CreateObject<Target>()
+            .Invoke<double[], double>(nameof(Target.SumDoubles), payload);
+
+        Assert.Equal(expected, sum);
+    }
+
     public void Dispose()
         => _runtime.Dispose();
 
@@ -153,5 +198,19 @@ public sealed class BlittableCollectionInvocationTest : IDisposable
 
         public long[] EchoLongs(long[] values)
             => values;
+
+        public int SumInts(int[] values)
+        {
+            var sum = 0;
+            foreach (var value in values)
+            {
+                sum += value;
+            }
+
+            return sum;
+        }
+
+        public int CountOrMinusOne(double[]? values)
+            => values?.Length ?? -1;
     }
 }

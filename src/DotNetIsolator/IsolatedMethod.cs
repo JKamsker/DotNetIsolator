@@ -59,6 +59,44 @@ public class IsolatedMethod
         return false;
     }
 
+    // Element-kind tags shared with the native element_class_for_kind switch and the managed
+    // ObjectGraphPrimitiveCollections codec. Do not renumber.
+    private const int KindBoolean = 1, KindSByte = 2, KindByte = 3, KindInt16 = 4, KindUInt16 = 5, KindChar = 6,
+        KindInt32 = 7, KindUInt32 = 8, KindInt64 = 9, KindUInt64 = 10, KindSingle = 11, KindDouble = 12;
+
+    // Routes exact (T[]) -> TRes calls for blittable primitive element types through the native
+    // zero-copy argument path. A null array falls back to the managed path so null is preserved.
+    private bool TryInvokeBlittableArrayArg<T0, TRes>(IsolatedObject? instance, T0 param0, out TRes result)
+    {
+        if (typeof(T0) == typeof(int[])) return TryArrayArg<int, TRes>(instance, param0, KindInt32, out result);
+        if (typeof(T0) == typeof(uint[])) return TryArrayArg<uint, TRes>(instance, param0, KindUInt32, out result);
+        if (typeof(T0) == typeof(long[])) return TryArrayArg<long, TRes>(instance, param0, KindInt64, out result);
+        if (typeof(T0) == typeof(ulong[])) return TryArrayArg<ulong, TRes>(instance, param0, KindUInt64, out result);
+        if (typeof(T0) == typeof(short[])) return TryArrayArg<short, TRes>(instance, param0, KindInt16, out result);
+        if (typeof(T0) == typeof(ushort[])) return TryArrayArg<ushort, TRes>(instance, param0, KindUInt16, out result);
+        if (typeof(T0) == typeof(double[])) return TryArrayArg<double, TRes>(instance, param0, KindDouble, out result);
+        if (typeof(T0) == typeof(float[])) return TryArrayArg<float, TRes>(instance, param0, KindSingle, out result);
+        if (typeof(T0) == typeof(char[])) return TryArrayArg<char, TRes>(instance, param0, KindChar, out result);
+        if (typeof(T0) == typeof(bool[])) return TryArrayArg<bool, TRes>(instance, param0, KindBoolean, out result);
+        if (typeof(T0) == typeof(sbyte[])) return TryArrayArg<sbyte, TRes>(instance, param0, KindSByte, out result);
+
+        result = default!;
+        return false;
+    }
+
+    private bool TryArrayArg<T, TRes>(IsolatedObject? instance, object? param0, int elementKind, out TRes result) where T : unmanaged
+    {
+        if (param0 is not T[] array)
+        {
+            // Null (or unexpected) array: let the managed path serialize it so null is preserved.
+            result = default!;
+            return false;
+        }
+
+        result = _runtimeInstance.InvokeBlittableArrayArgMethod<T, TRes>(_monoMethodPtr, instance, array, elementKind);
+        return true;
+    }
+
     public TRes Invoke<T0, TRes>(IsolatedObject? instance, T0 param0)
     {
         if (typeof(T0) == typeof(int) && typeof(TRes) == typeof(int))
@@ -68,6 +106,11 @@ public class IsolatedMethod
                 instance,
                 (int)(object)param0!);
             return (TRes)(object)result;
+        }
+
+        if (TryInvokeBlittableArrayArg<T0, TRes>(instance, param0, out var arrayArgResult))
+        {
+            return arrayArgResult;
         }
 
         // Ideally we'd serialize directly into guest memory but that probably involves implementing

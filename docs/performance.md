@@ -163,6 +163,14 @@ The following paths were tested and kept:
   generalizes the `() -> byte[]` fast path and removes the guest-side
   serializer invocation, the guest `MemoryStream`/`ToArray`, and the redundant
   large-buffer copies for the common array-return case.
+* Native blittable-array argument path: `IsolatedMethod.Invoke<T[], TRes>` for
+  any blittable primitive element type sends the raw element bytes into a guest
+  buffer once, and the guest materializes the managed array directly with
+  `mono_array_new` plus a single `memcpy` instead of deserializing it through the
+  object-graph path. The return value still flows through the normal result
+  serialization, so any return type is supported, and a `null` array falls back
+  to the managed path so `null` is preserved. This is the argument-direction
+  counterpart of the native array-return path.
 * Native void invoke paths: `IsolatedMethod.InvokeVoid` and
   `IsolatedMethod.InvokeVoid<int>` bypass object-graph serialization for exact
   `() -> void` and `int -> void` methods while keeping native signature
@@ -388,9 +396,15 @@ Interpretation:
   return. Because the old path is linear in element count, the advantage keeps
   growing with size: a `131072`-element `double[]` return measured about
   `118.840 us`, versus an extrapolated per-element baseline of about `127.6 ms`,
-  which is about `1074x`. Collection arguments and `List<T>`/nested-array
-  payloads still use the generalized managed codec, so they keep their large
-  win too.
+  which is about `1074x`. `List<T>`/nested-array payloads still use the
+  generalized managed codec, so they keep their large win too.
+* The native blittable-array argument path then took the argument direction
+  below the managed codec. On the same `32768`-element payload a `double[]`
+  argument dropped from the codec's about `456 us` to about `230 us`, which is
+  about `145x` versus the original per-element baseline of about `33.248 ms`. The
+  argument direction stays somewhat above the matching return because the guest
+  must allocate and fill a fresh managed array, whereas the return path hands
+  back an array the guest already owns.
 * Removing the duplicate host-side raw callback argument copy reduced a clean
   A/B sample for a raw 64 KiB host callback from about `88.4 us` at `HEAD` to
   about `70.7 us`. The callback result buffer is now also released by the guest

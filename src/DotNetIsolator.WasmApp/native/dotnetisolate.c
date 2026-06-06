@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <mono/metadata/appdomain.h>
 #include <mono/metadata/class.h>
 #include <mono/metadata/metadata.h>
@@ -32,6 +33,19 @@ typedef struct BlittableArrayInvocationResult {
 	MonoGCHandle result_handle;
 	MonoString* error_msg;
 } BlittableArrayInvocationResult;
+
+typedef struct BlittableArgInvocation {
+	MonoGCHandle target;
+	MonoMethod* method_ptr;
+	void* arg_data; // raw element bytes (host-owned)
+	int arg_length; // element count
+	int arg_element_size; // bytes per element
+	int arg_element_kind; // element-kind tag
+	MonoString* result_exception;
+	void* result_serialized;
+	int result_serialized_length;
+	MonoGCHandle result_serialized_handle;
+} BlittableArgInvocation;
 
 __attribute__((export_name("dotnetisolator_instantiate_class")))
 MonoGCHandle dotnetisolator_instantiate_class(char* assembly_name, char* namespace, char* class_name, char** error_msg) {
@@ -176,6 +190,26 @@ int blittable_element_size(MonoClass* element_class) {
 	return 0;
 }
 
+// Maps an element-kind tag (shared with the managed ObjectGraphPrimitiveCollections codec) to its
+// MonoClass, or NULL for an unknown tag.
+MonoClass* element_class_for_kind(int kind) {
+	switch (kind) {
+		case 1: return mono_get_boolean_class();
+		case 2: return mono_get_sbyte_class();
+		case 3: return mono_get_byte_class();
+		case 4: return mono_get_int16_class();
+		case 5: return mono_get_uint16_class();
+		case 6: return mono_get_char_class();
+		case 7: return mono_get_int32_class();
+		case 8: return mono_get_uint32_class();
+		case 9: return mono_get_int64_class();
+		case 10: return mono_get_uint64_class();
+		case 11: return mono_get_single_class();
+		case 12: return mono_get_double_class();
+		default: return NULL;
+	}
+}
+
 // Returns the element size for a () -> blittable[] method, or 0 if the signature does not match.
 int blittable_array_return_element_size(MonoMethod* method) {
 	MonoMethodSignature* signature = mono_method_signature(method);
@@ -239,9 +273,9 @@ void* deserialize_param(void* length_prefixed_buffer, MonoGCHandle* value_handle
 	return must_unbox ? mono_object_unbox(result) : result;
 }
 
-void serialize_return_value(MonoObject* value, RunnerInvocation* invocation, MonoObject** exception_buf) {
+void serialize_value_into(MonoObject* value, void** out_data, int* out_length, MonoGCHandle* out_handle, MonoObject** exception_buf) {
 	if (!value) {
-		invocation->result_serialized = NULL;
+		*out_data = NULL;
 		return;
 	}
 
@@ -251,9 +285,13 @@ void serialize_return_value(MonoObject* value, RunnerInvocation* invocation, Mon
 
 	void* method_params[] = { value };
 	MonoObject* byte_array = mono_runtime_invoke(serialize_return_value_dotnet_method, NULL, method_params, exception_buf);
-	invocation->result_serialized = mono_array_addr_with_size((MonoArray*)byte_array, 1, 0);
-	invocation->result_serialized_length = mono_array_length((MonoArray*)byte_array);
-	invocation->result_serialized_handle = (MonoGCHandle)mono_gchandle_new(byte_array, /* pinned */ 1);
+	*out_data = mono_array_addr_with_size((MonoArray*)byte_array, 1, 0);
+	*out_length = mono_array_length((MonoArray*)byte_array);
+	*out_handle = (MonoGCHandle)mono_gchandle_new(byte_array, /* pinned */ 1);
+}
+
+void serialize_return_value(MonoObject* value, RunnerInvocation* invocation, MonoObject** exception_buf) {
+	serialize_value_into(value, &invocation->result_serialized, &invocation->result_serialized_length, &invocation->result_serialized_handle, exception_buf);
 }
 
 __attribute__((export_name("dotnetisolator_invoke_method")))
@@ -483,6 +521,48 @@ void dotnetisolator_invoke_byte_array(ByteArrayInvocationResult* result, MonoGCH
 __attribute__((export_name("dotnetisolator_invoke_blittable_array")))
 void dotnetisolator_invoke_blittable_array(BlittableArrayInvocationResult* result, MonoGCHandle target, MonoMethod* method_ptr) {
 	invoke_blittable_array(target, method_ptr, result);
+}
+
+// Zero-copy fast path for exact (T[]) -> TRes methods where T is a blittable primitive. The host
+// supplies the raw element bytes; the guest materializes a managed array directly via mono_array_new
+// plus a single memcpy, invokes the method, and serializes the result through the normal path.
+__attribute__((export_name("dotnetisolator_invoke_blittable_array_arg")))
+void dotnetisolator_invoke_blittable_array_arg(BlittableArgInvocation* invocation) {
+	invocation->result_exception = NULL;
+	invocation->result_serialized = NULL;
+	invocation->result_serialized_length = 0;
+	invocation->result_serialized_handle = NULL;
+
+	MonoClass* element_class = element_class_for_kind(invocation->arg_element_kind);
+	if (!element_class) {
+		invocation->result_exception = mono_string_new_wrapper("Unknown blittable element kind in argument.");
+		return;
+	}
+
+	MonoArray* array = mono_array_new(mono_domain_get(), element_class, (uintptr_t)invocation->arg_length);
+	if (invocation->arg_length > 0) {
+		void* dest = mono_array_addr_with_size(array, invocation->arg_element_size, 0);
+		memcpy(dest, invocation->arg_data, (size_t)invocation->arg_length * (size_t)invocation->arg_element_size);
+	}
+
+	// Pin the array so it does not move while the invoked method runs.
+	MonoGCHandle array_handle = (MonoGCHandle)mono_gchandle_new((MonoObject*)array, /* pinned */ 1);
+
+	MonoObject* exc = NULL;
+	MonoObject* target = invocation->target ? mono_gchandle_get_target((uint32_t)invocation->target) : 0;
+	void* method_params[] = { array };
+	MonoObject* result = mono_runtime_invoke(invocation->method_ptr, target, method_params, &exc);
+
+	if (!exc) {
+		serialize_value_into(result, &invocation->result_serialized, &invocation->result_serialized_length, &invocation->result_serialized_handle, &exc);
+	}
+
+	mono_gchandle_free((uint32_t)array_handle);
+
+	if (exc) {
+		MonoObject* ignored_tostring_exception;
+		invocation->result_exception = mono_object_to_string(exc, &ignored_tostring_exception);
+	}
 }
 
 __attribute__((export_name("dotnetisolator_invoke_i32_packed")))

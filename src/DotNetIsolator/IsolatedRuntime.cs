@@ -23,6 +23,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int, int> _invokeVoidMethodInt32;
     private readonly Action<int, int, int> _invokeByteArrayMethod;
     private readonly Action<int, int, int> _invokeBlittableArrayMethod;
+    private readonly Action<int> _invokeBlittableArrayArgMethod;
     private readonly Action<int> _invokeDotNetMethod;
     private readonly Action<int> _releaseObject;
     private readonly ConcurrentDictionary<(string AssemblyName, string? Namespace, string? DeclaringTypeName, string TypeName, string MethodName, int NumArgs), IsolatedMethod> _methodLookupCache = new();
@@ -51,6 +52,7 @@ public class IsolatedRuntime : IDisposable
         _invokeVoidMethodInt32 = exports.InvokeVoidMethodInt32;
         _invokeByteArrayMethod = exports.InvokeByteArrayMethod;
         _invokeBlittableArrayMethod = exports.InvokeBlittableArrayMethod;
+        _invokeBlittableArrayArgMethod = exports.InvokeBlittableArrayArgMethod;
         _invokeDotNetMethod = exports.InvokeDotNetMethod;
         _releaseObject = exports.ReleaseObject;
 
@@ -359,6 +361,58 @@ public class IsolatedRuntime : IDisposable
         finally
         {
             _shadowStack.PopFrame(wasmPtr, len);
+        }
+    }
+
+    // Zero-copy fast path for exact (T[]) -> TRes methods where T is a blittable primitive.
+    // The host copies the raw element bytes into a guest buffer once; the guest builds the managed
+    // array directly from those bytes, bypassing managed argument serialization. The return value is
+    // serialized through the normal path, so any return type is supported.
+    internal TRes InvokeBlittableArrayArgMethod<T, TRes>(int monoMethodPtr, IsolatedObject? instance, T[] arg, int elementKind) where T : unmanaged
+    {
+        var argDataPtr = arg.Length == 0 ? 0 : CopyValue<T>(arg, addLengthPrefix: false);
+        var len = Marshal.SizeOf<BlittableArgInvocation>();
+        var wasmPtr = _shadowStack.PushFrame(len);
+        try
+        {
+            var invocationStruct = _memory.GetSpan(wasmPtr, len);
+            ref var invocation = ref MemoryMarshal.AsRef<BlittableArgInvocation>(invocationStruct);
+            invocation = new BlittableArgInvocation
+            {
+                Target = instance is null ? 0 : instance.GuestGCHandle,
+                MethodPtr = monoMethodPtr,
+                ArgData = argDataPtr,
+                ArgLength = arg.Length,
+                ArgElementSize = Unsafe.SizeOf<T>(),
+                ArgElementKind = elementKind,
+            };
+
+            _invokeBlittableArrayArgMethod(wasmPtr);
+
+            if (invocation.ResultException != 0)
+            {
+                throw new IsolatedException(ReadDotNetString(invocation.ResultException));
+            }
+
+            if (invocation.ResultSerialized == 0)
+            {
+                return default!;
+            }
+
+            var resultBytes = _memory
+                .GetSpan(invocation.ResultSerialized, invocation.ResultSerializedLength)
+                .ToArray();
+            var result = MessagePackCompatibility.DeserializeObject<TRes>(resultBytes)!;
+            ReleaseGCHandle(invocation.ResultSerializedGCHandle);
+            return result;
+        }
+        finally
+        {
+            _shadowStack.PopFrame(wasmPtr, len);
+            if (argDataPtr != 0)
+            {
+                Free(argDataPtr);
+            }
         }
     }
 
