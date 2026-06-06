@@ -18,6 +18,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int, int, int, int, int> _lookupDotNetMethod;
     private readonly Func<int, int, int> _deserializeAsDotNetObject;
     private readonly Func<int, int, long, int, int, int, long> _invokeScalarMethod;
+    private readonly Func<int, int, long, int, int> _invokeScalarVoidMethod;
     private readonly Action<int> _invokeScalarBatchMethod;
     private readonly Func<int, int, long> _invokeInt32MethodNoArgsPacked;
     private readonly Func<int, int, int, long> _invokeInt32MethodPacked;
@@ -75,6 +76,7 @@ public class IsolatedRuntime : IDisposable
         _invokeBlittableListMethod = exports.InvokeBlittableListMethod;
         _invokeBlittableArrayArgMethod = exports.InvokeBlittableArrayArgMethod;
         _invokeScalarMethod = exports.InvokeScalarMethod;
+        _invokeScalarVoidMethod = exports.InvokeScalarVoidMethod;
         _invokeScalarBatchMethod = exports.InvokeScalarBatchMethod;
         _invokeDotNetMethod = exports.InvokeDotNetMethod;
         _releaseObject = exports.ReleaseObject;
@@ -305,6 +307,17 @@ public class IsolatedRuntime : IDisposable
         {
             errorParam.Pop();
         }
+    }
+
+    internal void InvokeScalarVoidMethod(int monoMethodPtr, IsolatedObject? instance, long argBits, int argKind)
+    {
+        var errorMessagePtr = _invokeScalarVoidMethod(
+            instance is null ? 0 : instance.GuestGCHandle,
+            monoMethodPtr,
+            argBits,
+            argKind);
+
+        UnpackVoidMethodResult(errorMessagePtr);
     }
 
     // Batched primitive scalar invocation: runs the method once per argument in a single boundary
@@ -665,19 +678,22 @@ public class IsolatedRuntime : IDisposable
                 // Deserialize directly from guest memory instead of copying the payload into a host
                 // array first. The host deserializes using the expected result type rather than
                 // trusting guest-provided top-level type metadata.
-                var resultSpan = _memory.GetSpan(invocation.ResultSerialized, invocation.ResultSerializedLength);
-                TRes result;
-                unsafe
+                try
                 {
-                    fixed (byte* resultPtr = resultSpan)
+                    var resultSpan = _memory.GetSpan(invocation.ResultSerialized, invocation.ResultSerializedLength);
+                    unsafe
                     {
-                        using var resultStream = new UnmanagedMemoryStream(resultPtr, resultSpan.Length);
-                        result = MessagePackCompatibility.DeserializeObject<TRes>(resultStream)!;
+                        fixed (byte* resultPtr = resultSpan)
+                        {
+                            using var resultStream = new UnmanagedMemoryStream(resultPtr, resultSpan.Length);
+                            return MessagePackCompatibility.DeserializeObject<TRes>(resultStream)!;
+                        }
                     }
                 }
-
-                ReleaseGCHandle(invocation.ResultSerializedGCHandle);
-                return result;
+                finally
+                {
+                    ReleaseGCHandle(invocation.ResultSerializedGCHandle);
+                }
             }
         }
         finally

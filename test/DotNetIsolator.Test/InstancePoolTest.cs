@@ -1,4 +1,5 @@
 using DotNetIsolator.Test;
+using System.Reflection;
 using Xunit;
 
 namespace DotNetIsolator;
@@ -20,6 +21,61 @@ public sealed class InstancePoolTest
             UseInstancePool = true,
             UseRuntimeMemorySnapshot = false,
         }));
+    }
+
+    [Fact]
+    public void RejectsNegativeMaxPoolSize()
+    {
+        Assert.Throws<ArgumentException>(() => new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
+        {
+            MaxInstancePoolSize = -1,
+        }));
+    }
+
+    [Fact]
+    public void RejectsInvalidResetMode()
+    {
+        Assert.Throws<ArgumentException>(() => new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
+        {
+            InstancePoolResetMode = (InstancePoolResetMode)42,
+        }));
+    }
+
+    [Fact]
+    public void DoesNotParkMoreThanMaxPoolSize()
+    {
+        using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
+        {
+            UseRuntimeMemorySnapshot = true,
+            UseInstancePool = true,
+            MaxInstancePoolSize = 1,
+        }).WithBinDirectoryAssemblyLoader();
+
+        var runtime1 = new IsolatedRuntime(host);
+        var runtime2 = new IsolatedRuntime(host);
+
+        runtime1.Dispose();
+        runtime2.Dispose();
+
+        Assert.Equal(1, GetParkedInstanceCount(host));
+    }
+
+    [Fact]
+    public void FullResetModeCapturesFullSnapshotPages()
+    {
+        using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
+        {
+            UseRuntimeMemorySnapshot = true,
+            UseInstancePool = true,
+            InstancePoolResetMode = InstancePoolResetMode.FullSnapshotRestore,
+        }).WithBinDirectoryAssemblyLoader();
+
+        host.PreloadRuntimeMemorySnapshot();
+
+        var snapshot = GetRuntimeMemorySnapshot(host);
+        var allPages = GetSnapshotAllPages(snapshot);
+        Assert.NotNull(allPages);
+        Assert.True(allPages.Length > 0);
     }
 
     [Fact]
@@ -77,6 +133,22 @@ public sealed class InstancePoolTest
             Assert.Equal(42, result);
         }
     }
+
+    private static int GetParkedInstanceCount(IsolatedRuntimeHost host)
+        => (int)typeof(IsolatedRuntimeHost)
+            .GetField("_parkedInstanceCount", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(host)!;
+
+    private static object GetRuntimeMemorySnapshot(IsolatedRuntimeHost host)
+        => typeof(IsolatedRuntimeHost)
+            .GetField("_runtimeMemorySnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(host)!;
+
+    private static Array? GetSnapshotAllPages(object snapshot)
+        => (Array?)snapshot
+            .GetType()
+            .GetField("_allPages", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(snapshot);
 
     private sealed class Target
     {

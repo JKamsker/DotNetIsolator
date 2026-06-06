@@ -437,6 +437,40 @@ internal static class WarmCallBenchmarks
             elapsed);
     }
 
+    public static Measurement MeasureIsolatedByteArrayArgCalls(BenchmarkOptions options, bool useModuleCache)
+    {
+        using var host = CreateHost(options, useModuleCache);
+        using var runtime = new IsolatedRuntime(host);
+        var target = runtime.CreateObject<BenchmarkTarget>();
+        var method = target.FindMethod(nameof(BenchmarkTarget.SumBytes), 1);
+        var payload = new byte[64 * 1024];
+        for (var i = 0; i < payload.Length; i++)
+        {
+            payload[i] = (byte)i;
+        }
+
+        long sum = 0;
+        for (var i = 0; i < 3; i++)
+        {
+            sum += method.Invoke<byte[], int>(target, payload);
+        }
+
+        var elapsed = Time(() =>
+        {
+            for (var i = 0; i < options.PayloadIterations; i++)
+            {
+                sum += method.Invoke<byte[], int>(target, payload);
+            }
+        });
+
+        target.ReleaseGCHandle();
+        MeasurementSink.Consume(sum);
+        return new Measurement(
+            "Isolated warm-runtime byte[65536] argument",
+            options.PayloadIterations,
+            elapsed);
+    }
+
     public static Measurement MeasureIsolatedTypedCallbackCalls(BenchmarkOptions options, bool useModuleCache)
     {
         using var host = CreateHost(options, useModuleCache);

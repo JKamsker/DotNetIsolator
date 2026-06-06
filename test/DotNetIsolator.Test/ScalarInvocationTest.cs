@@ -127,6 +127,27 @@ public sealed class ScalarInvocationTest : IDisposable
     }
 
     [Fact]
+    public void CanInvokePrimitiveScalarVoidArguments()
+    {
+        var obj = _runtime.CreateObject<Target>();
+
+        obj.InvokeVoid<double>(nameof(Target.StoreDouble), 12.5);
+        obj.InvokeVoid<long>(nameof(Target.StoreLong), long.MinValue + 42);
+        obj.InvokeVoid<bool>(nameof(Target.StoreBoolean), true);
+
+        Assert.Equal(12.5, obj.Invoke<double>(nameof(Target.GetStoredDouble)));
+        Assert.Equal(long.MinValue + 42, obj.Invoke<long>(nameof(Target.GetStoredLong)));
+        Assert.True(obj.Invoke<bool>(nameof(Target.GetStoredBoolean)));
+    }
+
+    [Fact]
+    public void ThrowsWhenScalarVoidSignatureMismatches()
+    {
+        var obj = _runtime.CreateObject<Target>();
+        Assert.Throws<IsolatedException>(() => obj.InvokeVoid<double>(nameof(Target.StoreLong), 1.0));
+    }
+
+    [Fact]
     public void ThrowsWhenScalarSignatureMismatches()
     {
         // The guest validates the requested kinds against the real signature: NegateDouble is
@@ -140,6 +161,10 @@ public sealed class ScalarInvocationTest : IDisposable
 
     private sealed class Target
     {
+        private double _storedDouble;
+        private long _storedLong;
+        private bool _storedBoolean;
+
         public double NegateDouble(double value) => -value;
 
         public long DoubleLong(long value) => unchecked(value + value);
@@ -163,5 +188,17 @@ public sealed class ScalarInvocationTest : IDisposable
         public int Triple(int value) => value * 3;
 
         public double Scale(double value) => value * 2.5;
+
+        public void StoreDouble(double value) => _storedDouble = value;
+
+        public double GetStoredDouble() => _storedDouble;
+
+        public void StoreLong(long value) => _storedLong = value;
+
+        public long GetStoredLong() => _storedLong;
+
+        public void StoreBoolean(bool value) => _storedBoolean = value;
+
+        public bool GetStoredBoolean() => _storedBoolean;
     }
 }

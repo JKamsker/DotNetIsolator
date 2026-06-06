@@ -319,6 +319,24 @@ int method_signature_is_byte_array(MonoMethod* method) {
 	return element_class == mono_get_byte_class();
 }
 
+int method_signature_is_blittable_array_arg(MonoMethod* method, int element_kind) {
+	MonoMethodSignature* signature = mono_method_signature(method);
+	if (mono_signature_get_param_count(signature) != 1) {
+		return 0;
+	}
+
+	void* iterator = NULL;
+	MonoType* parameter_type = mono_signature_get_params(signature, &iterator);
+	if (mono_type_get_type(parameter_type) != MONO_TYPE_SZARRAY) {
+		return 0;
+	}
+
+	MonoClass* expected_element_class = element_class_for_kind(element_kind);
+	MonoClass* array_class = mono_class_from_mono_type(parameter_type);
+	MonoClass* actual_element_class = mono_class_get_element_class(array_class);
+	return expected_element_class && actual_element_class == expected_element_class;
+}
+
 void* deserialize_param(void* length_prefixed_buffer, MonoGCHandle* value_handle, MonoObject** exception_buf) {
 	if (!length_prefixed_buffer) {
 		return NULL;
@@ -689,6 +707,11 @@ void dotnetisolator_invoke_method(RunnerInvocation* invocation) {
 	int num_args = invocation->args_length_prefixed_buffers_length;
 	void* method_params[num_args];
 	MonoGCHandle arg_handles[num_args];
+	for (int i = 0; i < num_args; i++) {
+		method_params[i] = NULL;
+		arg_handles[i] = NULL;
+	}
+
 	for (int i = 0; !exc && i < num_args; i++) {
 		void* arg_length_prefixed_buffer = invocation->args_length_prefixed_buffers[i];
 		method_params[i] = deserialize_param(arg_length_prefixed_buffer, &arg_handles[i], &exc);
@@ -705,14 +728,14 @@ void dotnetisolator_invoke_method(RunnerInvocation* invocation) {
 
 		MonoObject* result = mono_runtime_invoke(invocation->method_ptr, target, method_params, &exc);
 
-		for (int i = 0; i < num_args; i++) {
-			if (arg_handles[i]) {
-				mono_gchandle_free((uint32_t)arg_handles[i]);
-			}
-		}
-
 		if (!exc) {
 			serialize_return_value(result, invocation, &exc);
+		}
+	}
+
+	for (int i = 0; i < num_args; i++) {
+		if (arg_handles[i]) {
+			mono_gchandle_free((uint32_t)arg_handles[i]);
 		}
 	}
 
@@ -805,6 +828,48 @@ static int invoke_i32_void(MonoGCHandle target, MonoMethod* method_ptr, int arg0
 	MonoObject* exc = NULL;
 	MonoObject* target_object = target ? mono_gchandle_get_target((uint32_t)target) : 0;
 	mono_runtime_invoke(method_ptr, target_object, method_params, &exc);
+
+	if (exc) {
+		MonoObject* ignored_tostring_exception;
+		*error_msg = mono_object_to_string(exc, &ignored_tostring_exception);
+		return 0;
+	}
+
+	return 1;
+}
+
+static int invoke_scalar_void(MonoGCHandle target, MonoMethod* method_ptr, uint64_t arg_bits, int arg_kind, MonoString** error_msg) {
+	*error_msg = NULL;
+
+	MonoMethodSignature* signature = mono_method_signature(method_ptr);
+	int expected_params = arg_kind == 0 ? 0 : 1;
+	if ((int)mono_signature_get_param_count(signature) != expected_params) {
+		return fail_with_message("The method does not match the requested scalar void signature (parameter count).", error_msg);
+	}
+
+	if (arg_kind != 0) {
+		void* iterator = NULL;
+		MonoType* parameter_type = mono_signature_get_params(signature, &iterator);
+		if (!mono_type_matches_kind(parameter_type, arg_kind)) {
+			return fail_with_message("The method does not match the requested scalar void argument type.", error_msg);
+		}
+	}
+
+	MonoType* return_type = mono_signature_get_return_type(signature);
+	if (mono_type_get_type(return_type) != MONO_TYPE_VOID) {
+		return fail_with_message("The method does not match the requested scalar void return type.", error_msg);
+	}
+
+	void* method_params[1];
+	void** method_params_ptr = NULL;
+	if (arg_kind != 0) {
+		method_params[0] = &arg_bits;
+		method_params_ptr = method_params;
+	}
+
+	MonoObject* exc = NULL;
+	MonoObject* target_object = target ? mono_gchandle_get_target((uint32_t)target) : 0;
+	mono_runtime_invoke(method_ptr, target_object, method_params_ptr, &exc);
 
 	if (exc) {
 		MonoObject* ignored_tostring_exception;
@@ -946,6 +1011,12 @@ static void invoke_blittable_list(MonoGCHandle target, MonoMethod* method_ptr, B
 		return;
 	}
 
+	uintptr_t items_length = mono_array_length(items);
+	if ((uintptr_t)size > items_length) {
+		fail_with_message("The list result reported a count larger than its backing array.", &result->error_msg);
+		return;
+	}
+
 	MonoClass* element_class = mono_class_get_element_class(mono_object_get_class((MonoObject*)items));
 	int element_size = blittable_element_size(element_class);
 	if (element_size == 0) {
@@ -992,6 +1063,32 @@ void dotnetisolator_invoke_blittable_array_arg(BlittableArgInvocation* invocatio
 	MonoClass* element_class = element_class_for_kind(invocation->arg_element_kind);
 	if (!element_class) {
 		invocation->result_exception = mono_string_new_wrapper("Unknown blittable element kind in argument.");
+		return;
+	}
+
+	int expected_element_size = kind_size(invocation->arg_element_kind);
+	if (invocation->arg_length < 0) {
+		invocation->result_exception = mono_string_new_wrapper("The array argument reported a negative length.");
+		return;
+	}
+
+	if (invocation->arg_element_size != expected_element_size) {
+		invocation->result_exception = mono_string_new_wrapper("The array argument element size does not match its element kind.");
+		return;
+	}
+
+	if (invocation->arg_length > 0 && invocation->arg_data == NULL) {
+		invocation->result_exception = mono_string_new_wrapper("The array argument data pointer is null.");
+		return;
+	}
+
+	if (invocation->arg_length > 0 && invocation->arg_length > INT32_MAX / invocation->arg_element_size) {
+		invocation->result_exception = mono_string_new_wrapper("The array argument byte length is too large.");
+		return;
+	}
+
+	if (!method_signature_is_blittable_array_arg(invocation->method_ptr, invocation->arg_element_kind)) {
+		invocation->result_exception = mono_string_new_wrapper("The method does not have the required blittable primitive array argument signature.");
 		return;
 	}
 
@@ -1185,6 +1282,16 @@ __attribute__((export_name("dotnetisolator_invoke_i32_void")))
 uint32_t dotnetisolator_invoke_i32_void(MonoGCHandle target, MonoMethod* method_ptr, int arg0) {
 	MonoString* error_msg = NULL;
 	if (!invoke_i32_void(target, method_ptr, arg0, &error_msg)) {
+		return error_msg ? (uint32_t)(uintptr_t)error_msg : 1;
+	}
+
+	return 0;
+}
+
+__attribute__((export_name("dotnetisolator_invoke_scalar_void")))
+uint32_t dotnetisolator_invoke_scalar_void(MonoGCHandle target, MonoMethod* method_ptr, uint64_t arg_bits, int arg_kind) {
+	MonoString* error_msg = NULL;
+	if (!invoke_scalar_void(target, method_ptr, arg_bits, arg_kind, &error_msg)) {
 		return error_msg ? (uint32_t)(uintptr_t)error_msg : 1;
 	}
 

@@ -1,6 +1,7 @@
 ﻿using DotNetIsolator.Internal;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Wasmtime;
 
 namespace DotNetIsolator;
@@ -15,6 +16,7 @@ public class IsolatedRuntimeHost : IDisposable
     private readonly IsolatedRuntimeHostOptions _options;
     private readonly object _runtimeMemorySnapshotLock = new();
     private readonly ConcurrentBag<RuntimeInstanceLease> _parkedInstances = new();
+    private int _parkedInstanceCount;
     private WasiConfiguration? _wasiConfiguration;
     private RuntimeMemorySnapshot? _runtimeMemorySnapshot;
     private List<AssemblyLoadCallback> _assemblyLoaders = new();
@@ -44,6 +46,20 @@ public class IsolatedRuntimeHost : IDisposable
         {
             throw new ArgumentException(
                 $"{nameof(options.UseInstancePool)} requires {nameof(options.UseRuntimeMemorySnapshot)} to be enabled.",
+                nameof(options));
+        }
+
+        if (options.MaxInstancePoolSize < 0)
+        {
+            throw new ArgumentException(
+                $"{nameof(options.MaxInstancePoolSize)} must be greater than or equal to zero.",
+                nameof(options));
+        }
+
+        if (!Enum.IsDefined(options.InstancePoolResetMode))
+        {
+            throw new ArgumentException(
+                $"{nameof(options.InstancePoolResetMode)} is not a valid instance pool reset mode.",
                 nameof(options));
         }
 
@@ -133,6 +149,7 @@ public class IsolatedRuntimeHost : IDisposable
     {
         while (_parkedInstances.TryTake(out var parked))
         {
+            Interlocked.Decrement(ref _parkedInstanceCount);
             parked.Store.Dispose();
         }
 
@@ -153,10 +170,11 @@ public class IsolatedRuntimeHost : IDisposable
 
         if (_parkedInstances.TryTake(out var parked))
         {
+            Interlocked.Decrement(ref _parkedInstanceCount);
             // Reset the reused instance to the clean post-startup state. Restoring the snapshot
-            // resets every runtime root, so the previous tenant's allocations become unreachable
-            // and are zero-overwritten on the next allocation.
-            snapshot.RestoreTo(parked.Exports.Memory);
+            // resets every runtime root. FullSnapshotRestore also restores pages that were not
+            // touched by startup but may have been modified by previous user code.
+            snapshot.RestoreTo(parked.Exports.Memory, _options.InstancePoolResetMode);
             parked.Store.SetData(storeData);
             return parked;
         }
@@ -182,13 +200,38 @@ public class IsolatedRuntimeHost : IDisposable
         // memory has trailing pages a fresh instance would see as OS-zero; restoring the snapshot
         // would not re-zero them, so it is dropped rather than risking a cross-tenant leak.
         var snapshot = _runtimeMemorySnapshot;
-        if (snapshot is not null && lease.Exports.Memory.GetLength() == snapshot.MemoryLength)
+        if (snapshot is not null
+            && lease.Exports.Memory.GetLength() == snapshot.MemoryLength
+            && TryReserveParkedInstanceSlot())
         {
             _parkedInstances.Add(lease);
         }
         else
         {
             lease.Store.Dispose();
+        }
+    }
+
+    private bool TryReserveParkedInstanceSlot()
+    {
+        var maxPoolSize = _options.MaxInstancePoolSize;
+        if (maxPoolSize == 0)
+        {
+            return false;
+        }
+
+        while (true)
+        {
+            var current = Volatile.Read(ref _parkedInstanceCount);
+            if (current >= maxPoolSize)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref _parkedInstanceCount, current + 1, current) == current)
+            {
+                return true;
+            }
         }
     }
 
@@ -217,7 +260,10 @@ public class IsolatedRuntimeHost : IDisposable
 
         lock (_runtimeMemorySnapshotLock)
         {
-            return _runtimeMemorySnapshot ??= RuntimeMemorySnapshot.Create(this);
+            return _runtimeMemorySnapshot ??= RuntimeMemorySnapshot.Create(
+                this,
+                _options.UseInstancePool
+                    && _options.InstancePoolResetMode == InstancePoolResetMode.FullSnapshotRestore);
         }
     }
 

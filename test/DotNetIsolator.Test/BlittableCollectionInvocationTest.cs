@@ -154,6 +154,42 @@ public sealed class BlittableCollectionInvocationTest : IDisposable
     }
 
     [Fact]
+    public void CanRoundTripByteArrayArgument()
+    {
+        var payload = new byte[] { 0, 1, 2, 127, 255 };
+        var sum = _runtime.CreateObject<Target>()
+            .Invoke<byte[], int>(nameof(Target.SumBytes), payload);
+
+        Assert.Equal(385, sum);
+    }
+
+    [Fact]
+    public void CanEchoByteArrayArgument()
+    {
+        var payload = new byte[] { 4, 3, 2, 1 };
+        var roundTripped = _runtime.CreateObject<Target>()
+            .Invoke<byte[], byte[]>(nameof(Target.EchoBytes), payload);
+
+        Assert.Equal(payload, roundTripped);
+    }
+
+    [Fact]
+    public void NullByteArrayArgumentIsPreserved()
+    {
+        var length = _runtime.CreateObject<Target>()
+            .Invoke<byte[], int>(nameof(Target.CountBytesOrMinusOne), null!);
+
+        Assert.Equal(-1, length);
+    }
+
+    [Fact]
+    public void ByteArrayArgumentValidatesGuestSignature()
+    {
+        Assert.Throws<IsolatedException>(() => _runtime.CreateObject<Target>()
+            .Invoke<byte[], int>(nameof(Target.SumInts), new byte[] { 1, 2, 3 }));
+    }
+
+    [Fact]
     public void CanPassEmptyArrayArgument()
     {
         var sum = _runtime.CreateObject<Target>()
@@ -269,6 +305,23 @@ public sealed class BlittableCollectionInvocationTest : IDisposable
 
             return sum;
         }
+
+        public int SumBytes(byte[] values)
+        {
+            var sum = 0;
+            foreach (var value in values)
+            {
+                sum += value;
+            }
+
+            return sum;
+        }
+
+        public byte[] EchoBytes(byte[] values)
+            => values;
+
+        public int CountBytesOrMinusOne(byte[]? values)
+            => values?.Length ?? -1;
 
         public int CountOrMinusOne(double[]? values)
             => values?.Length ?? -1;

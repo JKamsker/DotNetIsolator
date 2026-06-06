@@ -131,7 +131,7 @@ using var runtime1 = new IsolatedRuntime(host);
 using var runtime2 = new IsolatedRuntime(host);
 ```
 
-Each runtime has a separate WebAssembly memory and separate guest .NET runtime state. Runtime creation pays the .NET WASI startup cost, so keep an `IsolatedRuntime` warm and reuse it when you are making multiple calls into the same sandbox. Create a new runtime when you need a fresh sandbox with no previous guest state.
+Each runtime has a separate WebAssembly memory and separate guest .NET runtime state. Without the startup options below, runtime creation pays the .NET WASI startup cost, so keep an `IsolatedRuntime` warm and reuse it when you are making multiple calls into the same sandbox. Create a new runtime when you need a fresh sandbox with no previous guest state.
 
 `IsolatedRuntimeHost` uses Wasmtime's serialized module support to cache the compiled `DotNetIsolator.WasmApp.wasm` module by default. This reduces repeated host construction after the cache is warm, but it is not a snapshot of an already-started .NET runtime, so runtime creation still pays the wasm instantiation and `_start` costs. You can disable or redirect the cache:
 
@@ -142,6 +142,33 @@ using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
     PrecompiledModuleCacheDirectory = "path/to/cache",
 });
 ```
+
+For workloads that create many short-lived runtimes from the same host, enable the runtime memory snapshot:
+
+```cs
+using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
+{
+    UseRuntimeMemorySnapshot = true,
+}).WithBinDirectoryAssemblyLoader();
+
+host.PreloadRuntimeMemorySnapshot(); // Optional: move snapshot creation off the hot path.
+```
+
+The snapshot is per-host and in-memory. It starts one runtime, records the initialized WebAssembly memory pages, and restores those pages into later fresh instances before user code runs.
+
+For trusted guest code, you can also reuse started instances:
+
+```cs
+using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
+{
+    UseRuntimeMemorySnapshot = true,
+    UseInstancePool = true,
+    MaxInstancePoolSize = Environment.ProcessorCount,
+    InstancePoolResetMode = InstancePoolResetMode.FastTrustedChangedPages,
+}).WithBinDirectoryAssemblyLoader();
+```
+
+The default pool reset mode restores only pages changed during runtime startup, which is fast but does not scrub every orphaned byte written by previous user code. Use it for trusted-code cleanup, not as a boundary against hostile guests that can perform raw or unsafe memory reads. `InstancePoolResetMode.FullSnapshotRestore` captures and restores every initialized snapshot page before reuse; it costs more memory and reset time, but closes that specific leftover-page gap for pooled instances. Instances that grow linear memory beyond the snapshot size are not pooled, and `MaxInstancePoolSize` bounds retained started instances after burst load.
 
 See [docs/performance.md](docs/performance.md) for measured overhead and benchmark instructions.
 

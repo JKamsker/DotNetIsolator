@@ -97,6 +97,18 @@ public sealed class BenchmarkTarget
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    public int SumBytes(byte[] values)
+    {
+        var sum = 0;
+        foreach (var value in values)
+        {
+            sum += value;
+        }
+
+        return sum;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     public int CallIncrementCallback(int value)
         => DotNetIsolatorHost.Invoke<int>("increment-callback", value);
 

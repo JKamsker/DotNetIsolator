@@ -19,12 +19,18 @@ public sealed class IsolatedRuntimeHostOptions
     ///
     /// SECURITY: resetting an instance restores the runtime's roots so the previous tenant's
     /// managed state is unreachable and is zero-overwritten on the next allocation, but it does
-    /// NOT scrub every orphaned page. A previous tenant's leftover bytes can therefore remain
-    /// readable to guest code that performs raw/unsafe memory access. Use this only when the
-    /// guest code is trusted (isolation for cleanliness, not as a boundary against hostile
-    /// code). Leave it disabled when running potentially hostile guests.
+    /// not scrub every orphaned page unless <see cref="InstancePoolResetMode"/> is set to
+    /// <see cref="DotNetIsolator.InstancePoolResetMode.FullSnapshotRestore"/>. In the default
+    /// fast mode, a previous tenant's leftover bytes can therefore remain readable to guest code
+    /// that performs raw/unsafe memory access. Use the default mode only when guest code is
+    /// trusted (isolation for cleanliness, not as a boundary against hostile code).
     /// </summary>
     public bool UseInstancePool { get; init; }
+
+    public int MaxInstancePoolSize { get; init; } = Environment.ProcessorCount;
+
+    public DotNetIsolator.InstancePoolResetMode InstancePoolResetMode { get; init; } =
+        DotNetIsolator.InstancePoolResetMode.FastTrustedChangedPages;
 
     public bool UseMemoryInitCopyOnWrite { get; init; } = true;
 

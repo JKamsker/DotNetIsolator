@@ -98,6 +98,7 @@ public class IsolatedMethod
         if (typeof(T0) == typeof(float[])) return TryArrayArg<float, TRes>(instance, param0, KindSingle, out result);
         if (typeof(T0) == typeof(char[])) return TryArrayArg<char, TRes>(instance, param0, KindChar, out result);
         if (typeof(T0) == typeof(bool[])) return TryArrayArg<bool, TRes>(instance, param0, KindBoolean, out result);
+        if (typeof(T0) == typeof(byte[])) return TryArrayArg<byte, TRes>(instance, param0, KindByte, out result);
         if (typeof(T0) == typeof(sbyte[])) return TryArrayArg<sbyte, TRes>(instance, param0, KindSByte, out result);
 
         result = default!;
@@ -317,6 +318,12 @@ public class IsolatedMethod
         if (typeof(T0) == typeof(int))
         {
             _runtimeInstance.InvokeVoidMethod(_monoMethodPtr, instance, (int)(object)param0!);
+            return;
+        }
+
+        if (TryPackScalarArg(param0, out var argBits, out var argKind))
+        {
+            _runtimeInstance.InvokeScalarVoidMethod(_monoMethodPtr, instance, argBits, argKind);
             return;
         }
 

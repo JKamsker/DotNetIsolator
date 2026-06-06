@@ -80,10 +80,15 @@ rules out using the generated `_start` function as a normal Wizer initializer.
 DotNetIsolator therefore has an opt-in in-memory replacement:
 `IsolatedRuntimeHostOptions.UseRuntimeMemorySnapshot`. When enabled, the host can
 instantiate the bundled module once, run `_start`, compare the initialized
-linear memory with a fresh pre-start instance, and store only the WebAssembly
-pages that changed during startup. Later runtimes still get their own fresh
-Wasmtime store, instance, and guest heap; the snapshot restore only copies those
-pre-user-code changed pages into the new instance before user code runs.
+linear memory with a fresh pre-start instance, and store the WebAssembly pages
+needed for restore. The default fresh-runtime snapshot stores only pages that
+changed during startup. If the instance pool is used with
+`InstancePoolResetMode.FullSnapshotRestore`, the snapshot also stores every
+initialized page so pooled instances can restore pages that were not touched by
+startup but may have been modified by previous user code. Later non-pooled
+runtimes still get their own fresh Wasmtime store, instance, and guest heap; the
+snapshot restore copies pre-user-code pages into the new instance before user
+code runs.
 
 ```csharp
 using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
@@ -151,11 +156,15 @@ The following paths were tested and kept:
   tenant's managed state becomes unreachable and is zero-overwritten on the next
   allocation. This skips the dominant per-runtime cost, which is Wasmtime
   instantiation (about `3 ms`), not the snapshot copy. Instances that grow their
-  linear memory beyond the snapshot size are dropped rather than pooled. It is a
-  speed optimization for trusted guest code: the reset does not scrub every
-  orphaned page, so it should not be used as an isolation boundary against
-  hostile guests that can perform raw memory reads. Covered by a sequential-reuse
-  isolation test that asserts static guest state does not leak across tenants.
+  linear memory beyond the snapshot size are dropped rather than pooled, and
+  `MaxInstancePoolSize` bounds how many started instances are retained after
+  burst load. The default `FastTrustedChangedPages` reset is a speed
+  optimization for trusted guest code: it does not scrub every orphaned page, so
+  it should not be used as an isolation boundary against hostile guests that can
+  perform raw memory reads. `FullSnapshotRestore` captures and restores every
+  initialized snapshot page before reuse, trading memory and reset copy time for
+  stronger cleanup of pooled instances. Covered by sequential-reuse, pool-cap,
+  and full-snapshot capture tests.
 * Native `int -> int` invoke path: `IsolatedMethod.Invoke<int, int>` bypasses
   MessagePack and object-graph serialization.
 * Packed scalar return: `dotnetisolator_invoke_i32_i32_packed` returns the
@@ -219,13 +228,17 @@ The following paths were tested and kept:
   object-graph path. The return value still flows through the normal result
   serialization, so any return type is supported; the host deserializes that
   result directly from guest memory and releases the guest handle even if
-  deserialization fails. A `null` array falls back to the managed path so `null`
-  is preserved. This is the argument-direction counterpart of the native
-  array-return path.
+  deserialization fails. `byte[]` is included in this path. A `null` array falls
+  back to the managed path so `null` is preserved. The native side validates
+  element kind, element size, byte-length overflow, non-empty data pointers, and
+  the exact managed `T[]` argument signature before invoking the method. This is
+  the argument-direction counterpart of the native array-return path.
 * Native void invoke paths: `IsolatedMethod.InvokeVoid` and
-  `IsolatedMethod.InvokeVoid<int>` bypass object-graph serialization for exact
-  `() -> void` and `int -> void` methods while keeping native signature
-  validation.
+  `IsolatedMethod.InvokeVoid<T>` bypass object-graph serialization for exact
+  `() -> void` and one-argument primitive `T -> void` methods while keeping
+  native signature validation. The dedicated `int -> void` export is retained for
+  the hottest existing shape; other primitive arguments use the general scalar
+  void export.
 * Arity-aware public method lookup cache: `IsolatedObject.FindMethod` now passes
   the requested argument count into the runtime lookup, caches successful
   lookups on the object, and the runtime cache key includes the declaring type
