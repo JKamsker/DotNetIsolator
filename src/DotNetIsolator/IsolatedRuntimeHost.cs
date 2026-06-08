@@ -94,12 +94,12 @@ public class IsolatedRuntimeHost : IDisposable
             if (_runtimeMemorySnapshot is not null)
             {
                 throw new InvalidOperationException(
-                    $"{WithWasiConfiguration} cannot be called after the runtime memory snapshot has been initialized.");
+                    $"{nameof(WithWasiConfiguration)} cannot be called after the runtime memory snapshot has been initialized.");
             }
 
             if (_wasiConfiguration is not null)
             {
-                throw new InvalidOperationException($"{WithWasiConfiguration} can only be called once.");
+                throw new InvalidOperationException($"{nameof(WithWasiConfiguration)} can only be called once.");
             }
 
             _wasiConfiguration = configuration;
