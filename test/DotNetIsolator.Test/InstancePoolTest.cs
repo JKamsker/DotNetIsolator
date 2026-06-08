@@ -61,6 +61,43 @@ public sealed class InstancePoolTest
     }
 
     [Fact]
+    public void RuntimeDisposeReturnsPooledInstanceOnlyOnce()
+    {
+        using var host = CreatePooledHost();
+        var runtime = new IsolatedRuntime(host);
+
+        runtime.Dispose();
+        runtime.Dispose();
+
+        Assert.Equal(1, GetParkedInstanceCount(host));
+    }
+
+    [Fact]
+    public void ReturnedPooledInstanceDoesNotRetainRuntimeStoreData()
+    {
+        using var host = CreatePooledHost();
+        var runtime = new IsolatedRuntime(host);
+
+        runtime.Dispose();
+
+        var parkedStoreData = GetParkedStoreData(host);
+        Assert.NotSame(runtime, parkedStoreData);
+        Assert.IsNotType<IsolatedRuntime>(parkedStoreData);
+    }
+
+    [Fact]
+    public void RuntimeDisposedAfterHostDisposeIsNotReturnedToPool()
+    {
+        var host = CreatePooledHost();
+        var runtime = new IsolatedRuntime(host);
+
+        host.Dispose();
+        runtime.Dispose();
+
+        Assert.Equal(0, GetParkedInstanceCount(host));
+    }
+
+    [Fact]
     public void FullResetModeCapturesFullSnapshotPages()
     {
         using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
@@ -138,6 +175,20 @@ public sealed class InstancePoolTest
         => (int)typeof(IsolatedRuntimeHost)
             .GetField("_parkedInstanceCount", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(host)!;
+
+    private static object GetParkedStoreData(IsolatedRuntimeHost host)
+    {
+        var parkedInstances = typeof(IsolatedRuntimeHost)
+            .GetField("_parkedInstances", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(host)!;
+        var args = new object?[] { null };
+        var found = (bool)parkedInstances.GetType().GetMethod("TryPeek")!.Invoke(parkedInstances, args)!;
+        Assert.True(found);
+
+        var lease = args[0]!;
+        var store = lease.GetType().GetProperty("Store")!.GetValue(lease)!;
+        return store.GetType().GetMethod("GetData")!.Invoke(store, null)!;
+    }
 
     private static object GetRuntimeMemorySnapshot(IsolatedRuntimeHost host)
         => typeof(IsolatedRuntimeHost)

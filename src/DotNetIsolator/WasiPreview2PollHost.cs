@@ -26,6 +26,14 @@ internal static class WasiPreview2PollHost
         => (import.ModuleName == ClockModuleName && import.Name == SubscribeDurationName)
             || (import.ModuleName == PollModuleName && import.Name is PollName or DropPollableName);
 
+    public static void Reset(Store store, Action<int>? free = null)
+    {
+        if (States.TryGetValue(store, out var state))
+        {
+            state.Reset(free);
+        }
+    }
+
     private static int SubscribeDuration(Caller caller, long durationNanoseconds)
         => GetState(caller).SubscribeDuration(durationNanoseconds);
 
@@ -57,6 +65,20 @@ internal static class WasiPreview2PollHost
 
         public void DropPollable(int handle)
             => _timers.Remove(handle);
+
+        public void Reset(Action<int>? free)
+        {
+            _timers.Clear();
+            _nextHandle = 1;
+
+            if (_resultBufferPtr != 0 && free is not null)
+            {
+                free(_resultBufferPtr);
+            }
+
+            _resultBufferPtr = 0;
+            _resultBufferCapacity = 0;
+        }
 
         public void Poll(Caller caller, int pollablesPtr, int pollablesCount, int resultPtr)
         {
@@ -184,14 +206,24 @@ internal static class WasiPreview2PollHost
                 return;
             }
 
+            var oldResultBufferPtr = _resultBufferPtr;
+            Action<int>? free = null;
+            if (oldResultBufferPtr != 0)
+            {
+                free = caller.GetFunction("free")?.WrapAction<int>()
+                    ?? throw new InvalidOperationException("Caller lacks required export 'free'");
+            }
+
             var malloc = caller.GetFunction("malloc")
                 ?? throw new InvalidOperationException("Caller lacks required export 'malloc'");
-            _resultBufferPtr = malloc.WrapFunc<int, int>()!(byteCount);
-            if (_resultBufferPtr == 0)
+            var resultBufferPtr = malloc.WrapFunc<int, int>()!(byteCount);
+            if (resultBufferPtr == 0)
             {
                 throw new InvalidOperationException($"malloc failed when trying to allocate {byteCount} bytes");
             }
 
+            free?.Invoke(oldResultBufferPtr);
+            _resultBufferPtr = resultBufferPtr;
             _resultBufferCapacity = byteCount;
         }
 

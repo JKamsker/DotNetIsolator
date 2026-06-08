@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using Wasmtime;
 
 namespace DotNetIsolator;
@@ -35,7 +36,7 @@ public class IsolatedRuntime : IDisposable
     private readonly HostCallbackRegistry _callbacks = new();
     private readonly IsolatedRuntimeHost _host;
     private readonly RuntimeInstanceLease? _lease;
-    private bool _isDisposed;
+    private int _isDisposed;
 
     public IsolatedRuntime(IsolatedRuntimeHost host)
     {
@@ -100,8 +101,7 @@ public class IsolatedRuntime : IDisposable
 
     internal static IsolatedRuntime FromStore(Store store)
     {
-        var runtime = (IsolatedRuntime?)store.GetData();
-        if (runtime is null)
+        if (store.GetData() is not IsolatedRuntime runtime)
         {
             throw new InvalidOperationException("Runtime was not set on the store");
         }
@@ -720,7 +720,7 @@ public class IsolatedRuntime : IDisposable
 
     internal void ReleaseGCHandle(int guestGCHandle)
     {
-        if (!_isDisposed)
+        if (Volatile.Read(ref _isDisposed) == 0)
         {
             _releaseObject(guestGCHandle);
         }
@@ -728,7 +728,11 @@ public class IsolatedRuntime : IDisposable
 
     public void Dispose()
     {
-        _isDisposed = true;
+        if (Interlocked.Exchange(ref _isDisposed, 1) != 0)
+        {
+            return;
+        }
+
         _shadowStack.Dispose();
 
         if (_lease is not null)

@@ -15,11 +15,13 @@ public class IsolatedRuntimeHost : IDisposable
 
     private readonly IsolatedRuntimeHostOptions _options;
     private readonly object _runtimeMemorySnapshotLock = new();
+    private readonly object _parkedInstancesLock = new();
     private readonly ConcurrentBag<RuntimeInstanceLease> _parkedInstances = new();
     private int _parkedInstanceCount;
     private WasiConfiguration? _wasiConfiguration;
     private RuntimeMemorySnapshot? _runtimeMemorySnapshot;
     private List<AssemblyLoadCallback> _assemblyLoaders = new();
+    private int _isDisposed;
 
     static IsolatedRuntimeHost()
     {
@@ -89,6 +91,7 @@ public class IsolatedRuntimeHost : IDisposable
             throw new ArgumentNullException(nameof(configuration));
         }
 
+        ThrowIfDisposed();
         lock (_runtimeMemorySnapshotLock)
         {
             if (_runtimeMemorySnapshot is not null)
@@ -115,6 +118,7 @@ public class IsolatedRuntimeHost : IDisposable
             throw new ArgumentNullException(nameof(callback));
         }
 
+        ThrowIfDisposed();
         _assemblyLoaders.Add(callback);
         return this;
     }
@@ -136,6 +140,7 @@ public class IsolatedRuntimeHost : IDisposable
 
     public void PreloadRuntimeMemorySnapshot()
     {
+        ThrowIfDisposed();
         if (!_options.UseRuntimeMemorySnapshot)
         {
             throw new InvalidOperationException(
@@ -147,10 +152,18 @@ public class IsolatedRuntimeHost : IDisposable
 
     public void Dispose()
     {
-        while (_parkedInstances.TryTake(out var parked))
+        if (Interlocked.Exchange(ref _isDisposed, 1) != 0)
         {
-            Interlocked.Decrement(ref _parkedInstanceCount);
-            parked.Store.Dispose();
+            return;
+        }
+
+        lock (_parkedInstancesLock)
+        {
+            while (_parkedInstances.TryTake(out var parked))
+            {
+                Interlocked.Decrement(ref _parkedInstanceCount);
+                parked.Store.Dispose();
+            }
         }
 
         Module.Dispose();
@@ -164,6 +177,7 @@ public class IsolatedRuntimeHost : IDisposable
     // is available (enforced by the constructor for UseInstancePool).
     internal RuntimeInstanceLease RentRuntimeInstance(object storeData)
     {
+        ThrowIfDisposed();
         var snapshot = GetRuntimeMemorySnapshot()
             ?? throw new InvalidOperationException(
                 $"{nameof(IsolatedRuntimeHostOptions.UseInstancePool)} requires {nameof(IsolatedRuntimeHostOptions.UseRuntimeMemorySnapshot)} to be enabled.");
@@ -175,6 +189,7 @@ public class IsolatedRuntimeHost : IDisposable
             // resets every runtime root. FullSnapshotRestore also restores pages that were not
             // touched by startup but may have been modified by previous user code.
             snapshot.RestoreTo(parked.Exports.Memory, _options.InstancePoolResetMode);
+            WasiPreview2PollHost.Reset(parked.Store);
             parked.Store.SetData(storeData);
             return parked;
         }
@@ -196,6 +211,12 @@ public class IsolatedRuntimeHost : IDisposable
 
     internal void ReturnRuntimeInstance(RuntimeInstanceLease lease)
     {
+        if (Volatile.Read(ref _isDisposed) != 0)
+        {
+            lease.Store.Dispose();
+            return;
+        }
+
         // Only pool instances that stayed at the snapshot size. An instance that grew its linear
         // memory has trailing pages a fresh instance would see as OS-zero; restoring the snapshot
         // would not re-zero them, so it is dropped rather than risking a cross-tenant leak.
@@ -204,7 +225,29 @@ public class IsolatedRuntimeHost : IDisposable
             && lease.Exports.Memory.GetLength() == snapshot.MemoryLength
             && TryReserveParkedInstanceSlot())
         {
-            _parkedInstances.Add(lease);
+            try
+            {
+                WasiPreview2PollHost.Reset(lease.Store, lease.Exports.Free);
+                lease.Store.SetData(ParkedStoreData.Instance);
+
+                lock (_parkedInstancesLock)
+                {
+                    if (Volatile.Read(ref _isDisposed) != 0)
+                    {
+                        Interlocked.Decrement(ref _parkedInstanceCount);
+                        lease.Store.Dispose();
+                        return;
+                    }
+
+                    _parkedInstances.Add(lease);
+                }
+            }
+            catch
+            {
+                Interlocked.Decrement(ref _parkedInstanceCount);
+                lease.Store.Dispose();
+                throw;
+            }
         }
         else
         {
@@ -237,6 +280,7 @@ public class IsolatedRuntimeHost : IDisposable
 
     internal Store CreateStore(object data)
     {
+        ThrowIfDisposed();
         var store = new Store(Engine);
         try
         {
@@ -253,6 +297,7 @@ public class IsolatedRuntimeHost : IDisposable
 
     internal RuntimeMemorySnapshot? GetRuntimeMemorySnapshot()
     {
+        ThrowIfDisposed();
         if (!_options.UseRuntimeMemorySnapshot)
         {
             return null;
@@ -343,6 +388,14 @@ public class IsolatedRuntimeHost : IDisposable
         Linker.DefineFunction("dotnetisolator", "call_host_scalar", (CallerAction<int, int, int>)HandleCallHostScalar);
     }
 
+    private void ThrowIfDisposed()
+    {
+        if (Volatile.Read(ref _isDisposed) != 0)
+        {
+            throw new ObjectDisposedException(nameof(IsolatedRuntimeHost));
+        }
+    }
+
     private void HandleCallHostScalar(Caller caller, int namePtr, int nameLen, int invocationPtr)
     {
         var memory = caller.GetMemory("memory") ?? throw new InvalidOperationException("Caller lacks required export 'memory'");
@@ -409,6 +462,15 @@ public class IsolatedRuntimeHost : IDisposable
 }
 
 public delegate byte[]? AssemblyLoadCallback(string assemblyName);
+
+internal sealed class ParkedStoreData
+{
+    public static readonly ParkedStoreData Instance = new();
+
+    private ParkedStoreData()
+    {
+    }
+}
 
 internal sealed class RuntimeInstanceLease
 {
