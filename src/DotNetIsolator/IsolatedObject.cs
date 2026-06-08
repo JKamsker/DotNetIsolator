@@ -1,6 +1,8 @@
-﻿namespace DotNetIsolator;
+﻿using System.Threading;
 
-public class IsolatedObject
+namespace DotNetIsolator;
+
+public class IsolatedObject : IDisposable
 {
     private readonly IsolatedRuntime _runtimeInstance;
     private readonly string _assemblyName;
@@ -8,18 +10,19 @@ public class IsolatedObject
     private readonly string? _declaringTypeName;
     private readonly string _typeName;
     private readonly Dictionary<(string MethodName, int NumArgs), IsolatedMethod> _methodCache = new();
+    private int _guestGCHandle;
 
     internal IsolatedObject(IsolatedRuntime runtimeInstance, int gcHandle, string assemblyName, string? @namespace, string? declaringTypeName, string typeName)
     {
         _runtimeInstance = runtimeInstance;
-        GuestGCHandle = gcHandle;
+        _guestGCHandle = gcHandle;
         _assemblyName = assemblyName;
         _namespace = @namespace;
         _declaringTypeName = declaringTypeName;
         _typeName = typeName;
     }
 
-    internal int GuestGCHandle { get; private set; }
+    internal int GuestGCHandle => Volatile.Read(ref _guestGCHandle);
 
     public IsolatedMethod FindMethod(string methodName, int numArgs = -1)
     {
@@ -76,15 +79,13 @@ public class IsolatedObject
 
     public void ReleaseGCHandle()
     {
-        if (GuestGCHandle != 0)
+        var guestGCHandle = Interlocked.Exchange(ref _guestGCHandle, 0);
+        if (guestGCHandle != 0)
         {
-            _runtimeInstance.ReleaseGCHandle(GuestGCHandle);
-            GuestGCHandle = 0;
+            _runtimeInstance.ReleaseGCHandle(guestGCHandle);
         }
     }
 
-    ~IsolatedObject()
-    {
-        ReleaseGCHandle();
-    }
+    public void Dispose()
+        => ReleaseGCHandle();
 }
