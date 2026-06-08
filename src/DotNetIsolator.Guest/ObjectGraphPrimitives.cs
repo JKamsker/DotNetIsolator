@@ -42,7 +42,7 @@ internal static class ObjectGraphPrimitives
             : type == typeof(float) ? reader.ReadSingle()
             : type == typeof(double) ? reader.ReadDouble()
             : type == typeof(char) ? reader.ReadChar()
-            : type == typeof(byte[]) ? reader.ReadBytes(reader.ReadInt32())
+            : type == typeof(byte[]) ? ReadByteArray(reader)
             : type == typeof(DateTime) ? DateTime.FromBinary(reader.ReadInt64())
             : type == typeof(TimeSpan) ? new TimeSpan(reader.ReadInt64())
             : type == typeof(Guid) ? ReadGuid(reader)
@@ -56,6 +56,19 @@ internal static class ObjectGraphPrimitives
     {
         writer.Write(value.Length);
         writer.Write(value);
+    }
+
+    private static byte[] ReadByteArray(BinaryReader reader)
+    {
+        var length = reader.ReadInt32();
+        if (length < 0)
+        {
+            throw new InvalidDataException("Byte array length cannot be negative.");
+        }
+
+        var bytes = new byte[length];
+        ReadExactly(reader, bytes);
+        return bytes;
     }
 
     private static void WriteGuid(BinaryWriter writer, Guid value)
