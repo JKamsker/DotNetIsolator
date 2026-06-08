@@ -65,7 +65,7 @@ typedef struct BlittableArgInvocation {
 
 __attribute__((export_name("dotnetisolator_instantiate_class")))
 MonoGCHandle dotnetisolator_instantiate_class(char* assembly_name, char* namespace, char* class_name, char** error_msg) {
-	MonoGCHandle result;
+	MonoGCHandle result = NULL;
 
 	MonoAssembly* assembly = mono_wasm_assembly_load(assembly_name);
 	if (!assembly) {
@@ -675,8 +675,25 @@ void serialize_value_into(MonoObject* value, void** out_data, int* out_length, M
 
 	void* method_params[] = { value };
 	MonoObject* byte_array = mono_runtime_invoke(serialize_return_value_dotnet_method, NULL, method_params, exception_buf);
+
+	if (*exception_buf || !byte_array) {
+		*out_data = NULL;
+		*out_length = 0;
+		*out_handle = NULL;
+		return;
+	}
+
+	uintptr_t byte_array_length = mono_array_length((MonoArray*)byte_array);
+	if (byte_array_length > INT32_MAX) {
+		*out_data = NULL;
+		*out_length = 0;
+		*out_handle = NULL;
+		*exception_buf = (MonoObject*)mono_string_new_wrapper("The serialized result is too large.");
+		return;
+	}
+
 	*out_data = mono_array_addr_with_size((MonoArray*)byte_array, 1, 0);
-	*out_length = mono_array_length((MonoArray*)byte_array);
+	*out_length = (int)byte_array_length;
 	*out_handle = (MonoGCHandle)mono_gchandle_new(byte_array, /* pinned */ 1);
 }
 
@@ -1301,7 +1318,7 @@ uint32_t dotnetisolator_invoke_scalar_void(MonoGCHandle target, MonoMethod* meth
 __attribute__((export_name("dotnetisolator_deserialize_object")))
 MonoGCHandle dotnetisolator_deserialize_object(void* length_prefixed_buffer, MonoString** error_monostring) {
 	//printf("addr: %p; len: %i; first: %i\n", length_prefixed_buffer, ((int*)length_prefixed_buffer)[0], ((unsigned char*)length_prefixed_buffer)[4]);
-	MonoGCHandle result;
+	MonoGCHandle result = NULL;
 	MonoObject* deserialization_exception = NULL;
 	deserialize_param(length_prefixed_buffer, &result, &deserialization_exception);
 
