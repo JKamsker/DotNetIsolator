@@ -124,6 +124,14 @@ public class MethodInvocationTest : IDisposable
     }
 
     [Fact]
+    public void CanInvokeMultiLevelNestedTypeMethod()
+    {
+        var obj = _runtime.CreateObject<MultiLevelOuter.Middle.Inner>();
+
+        Assert.Equal("inner", obj.Invoke<string>(nameof(MultiLevelOuter.Middle.Inner.Identity)));
+    }
+
+    [Fact]
     public void CanInvokeComplexParamMethod()
     {
         var paramValue = TestClass.MyComplexObject.CreateTestValue();
@@ -329,5 +337,17 @@ class SecondOuter
     {
         public string Identity()
             => "second";
+    }
+}
+
+class MultiLevelOuter
+{
+    public class Middle
+    {
+        public class Inner
+        {
+            public string Identity()
+                => "inner";
+        }
     }
 }

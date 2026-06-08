@@ -139,7 +139,7 @@ public class IsolatedRuntime : IDisposable
     }
 
     public IsolatedObject CreateObject<T>()
-        => CreateObject(typeof(T).Assembly.GetName().Name!, typeof(T).Namespace, typeof(T).DeclaringType?.Name, typeof(T).Name);
+        => CreateObject(typeof(T).Assembly.GetName().Name!, typeof(T).Namespace, GetMonoDeclaringTypeName(typeof(T)), typeof(T).Name);
 
     public IsolatedObject CopyObject<T>(T value)
     {
@@ -156,7 +156,7 @@ public class IsolatedRuntime : IDisposable
                 throw new IsolatedException(errorMessage);
             }
 
-            return new IsolatedObject(this, gcHandle, typeof(T).Assembly.GetName().Name!, typeof(T).Namespace, typeof(T).DeclaringType?.Name, typeof(T).Name);
+            return new IsolatedObject(this, gcHandle, typeof(T).Assembly.GetName().Name!, typeof(T).Namespace, GetMonoDeclaringTypeName(typeof(T)), typeof(T).Name);
         }
         finally
         {
@@ -210,10 +210,10 @@ public class IsolatedRuntime : IDisposable
         => CopyValue(value, addLengthPrefix: true);
 
     public IsolatedMethod GetMethod(Type type, string methodName)
-        => GetMethod(type.Assembly.GetName().Name!, type.Namespace, type.DeclaringType?.Name, type.Name, methodName);
+        => GetMethod(type.Assembly.GetName().Name!, type.Namespace, GetMonoDeclaringTypeName(type), type.Name, methodName);
 
     public IsolatedMethod GetMethod(Type type, string methodName, int numArgs)
-        => GetMethod(type.Assembly.GetName().Name!, type.Namespace, type.DeclaringType?.Name, type.Name, methodName, numArgs);
+        => GetMethod(type.Assembly.GetName().Name!, type.Namespace, GetMonoDeclaringTypeName(type), type.Name, methodName, numArgs);
 
     public IsolatedMethod GetMethod(string assemblyName, string? @namespace, string? declaringTypeName, string typeName, string methodName, int numArgs = -1)
     {
@@ -784,8 +784,17 @@ public class IsolatedRuntime : IDisposable
     {
         var method = @delegate.Method;
         var methodType = method.DeclaringType!;
-        var wasmMethod = GetMethod(methodType.Assembly.GetName().Name!, methodType.Namespace, methodType.DeclaringType?.Name, methodType.Name, method.Name, -1);
+        var wasmMethod = GetMethod(methodType.Assembly.GetName().Name!, methodType.Namespace, GetMonoDeclaringTypeName(methodType), methodType.Name, method.Name, -1);
         return wasmMethod;
+    }
+
+    private static string? GetMonoDeclaringTypeName(Type type)
+        => type.DeclaringType is null ? null : GetMonoTypeName(type.DeclaringType);
+
+    private static string GetMonoTypeName(Type type)
+    {
+        var declaringTypeName = GetMonoDeclaringTypeName(type);
+        return declaringTypeName is null ? type.Name : $"{declaringTypeName}/{type.Name}";
     }
 
     internal long InvokeScalarCallback(string name, long argBits, int argKind, int resultKind)
