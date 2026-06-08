@@ -144,9 +144,9 @@ public static class IsolatedAsyncExtensions
     {
         ArgumentNullException.ThrowIfNull(method);
         Span<int> argAddresses = stackalloc int[1];
-        argAddresses[0] = CopyArgument(method, param0);
         try
         {
+            argAddresses[0] = CopyArgument(method, param0);
             return new ValueTask<TRes>(method.Runtime.InvokeDotNetMethod<TRes>(
                 method.MethodPointer,
                 instance,
@@ -154,7 +154,7 @@ public static class IsolatedAsyncExtensions
         }
         finally
         {
-            method.Runtime.Free(argAddresses[0]);
+            FreeArguments(method, argAddresses);
         }
     }
 
@@ -166,10 +166,10 @@ public static class IsolatedAsyncExtensions
     {
         ArgumentNullException.ThrowIfNull(method);
         Span<int> argAddresses = stackalloc int[2];
-        argAddresses[0] = CopyArgument(method, param0);
-        argAddresses[1] = CopyArgument(method, param1);
         try
         {
+            argAddresses[0] = CopyArgument(method, param0);
+            argAddresses[1] = CopyArgument(method, param1);
             return new ValueTask<TRes>(method.Runtime.InvokeDotNetMethod<TRes>(
                 method.MethodPointer,
                 instance,
@@ -177,8 +177,7 @@ public static class IsolatedAsyncExtensions
         }
         finally
         {
-            method.Runtime.Free(argAddresses[0]);
-            method.Runtime.Free(argAddresses[1]);
+            FreeArguments(method, argAddresses);
         }
     }
 
@@ -191,11 +190,11 @@ public static class IsolatedAsyncExtensions
     {
         ArgumentNullException.ThrowIfNull(method);
         Span<int> argAddresses = stackalloc int[3];
-        argAddresses[0] = CopyArgument(method, param0);
-        argAddresses[1] = CopyArgument(method, param1);
-        argAddresses[2] = CopyArgument(method, param2);
         try
         {
+            argAddresses[0] = CopyArgument(method, param0);
+            argAddresses[1] = CopyArgument(method, param1);
+            argAddresses[2] = CopyArgument(method, param2);
             return new ValueTask<TRes>(method.Runtime.InvokeDotNetMethod<TRes>(
                 method.MethodPointer,
                 instance,
@@ -203,9 +202,7 @@ public static class IsolatedAsyncExtensions
         }
         finally
         {
-            method.Runtime.Free(argAddresses[0]);
-            method.Runtime.Free(argAddresses[1]);
-            method.Runtime.Free(argAddresses[2]);
+            FreeArguments(method, argAddresses);
         }
     }
 
@@ -219,12 +216,12 @@ public static class IsolatedAsyncExtensions
     {
         ArgumentNullException.ThrowIfNull(method);
         Span<int> argAddresses = stackalloc int[4];
-        argAddresses[0] = CopyArgument(method, param0);
-        argAddresses[1] = CopyArgument(method, param1);
-        argAddresses[2] = CopyArgument(method, param2);
-        argAddresses[3] = CopyArgument(method, param3);
         try
         {
+            argAddresses[0] = CopyArgument(method, param0);
+            argAddresses[1] = CopyArgument(method, param1);
+            argAddresses[2] = CopyArgument(method, param2);
+            argAddresses[3] = CopyArgument(method, param3);
             return new ValueTask<TRes>(method.Runtime.InvokeDotNetMethod<TRes>(
                 method.MethodPointer,
                 instance,
@@ -232,10 +229,7 @@ public static class IsolatedAsyncExtensions
         }
         finally
         {
-            method.Runtime.Free(argAddresses[0]);
-            method.Runtime.Free(argAddresses[1]);
-            method.Runtime.Free(argAddresses[2]);
-            method.Runtime.Free(argAddresses[3]);
+            FreeArguments(method, argAddresses);
         }
     }
 
@@ -250,13 +244,13 @@ public static class IsolatedAsyncExtensions
     {
         ArgumentNullException.ThrowIfNull(method);
         Span<int> argAddresses = stackalloc int[5];
-        argAddresses[0] = CopyArgument(method, param0);
-        argAddresses[1] = CopyArgument(method, param1);
-        argAddresses[2] = CopyArgument(method, param2);
-        argAddresses[3] = CopyArgument(method, param3);
-        argAddresses[4] = CopyArgument(method, param4);
         try
         {
+            argAddresses[0] = CopyArgument(method, param0);
+            argAddresses[1] = CopyArgument(method, param1);
+            argAddresses[2] = CopyArgument(method, param2);
+            argAddresses[3] = CopyArgument(method, param3);
+            argAddresses[4] = CopyArgument(method, param4);
             return new ValueTask<TRes>(method.Runtime.InvokeDotNetMethod<TRes>(
                 method.MethodPointer,
                 instance,
@@ -264,14 +258,21 @@ public static class IsolatedAsyncExtensions
         }
         finally
         {
-            method.Runtime.Free(argAddresses[0]);
-            method.Runtime.Free(argAddresses[1]);
-            method.Runtime.Free(argAddresses[2]);
-            method.Runtime.Free(argAddresses[3]);
-            method.Runtime.Free(argAddresses[4]);
+            FreeArguments(method, argAddresses);
         }
     }
 
     private static int CopyArgument<T>(IsolatedMethod method, T value)
         => method.Runtime.CopyValueLengthPrefixed(MessagePackCompatibility.SerializeTypeless(value));
+
+    private static void FreeArguments(IsolatedMethod method, ReadOnlySpan<int> argAddresses)
+    {
+        foreach (var argAddress in argAddresses)
+        {
+            if (argAddress != 0)
+            {
+                method.Runtime.Free(argAddress);
+            }
+        }
+    }
 }

@@ -175,6 +175,20 @@ public class IsolatedMethod
         return default!;
     }
 
+    private int CopyArgument<T>(T value)
+        => _runtimeInstance.CopyValueLengthPrefixed(MessagePackCompatibility.SerializeTypeless(value));
+
+    private void FreeArguments(ReadOnlySpan<int> argAddresses)
+    {
+        foreach (var argAddress in argAddresses)
+        {
+            if (argAddress != 0)
+            {
+                _runtimeInstance.Free(argAddress);
+            }
+        }
+    }
+
     public TRes Invoke<T0, TRes>(IsolatedObject? instance, T0 param0)
     {
         if (typeof(T0) == typeof(int) && typeof(TRes) == typeof(int))
@@ -203,110 +217,80 @@ public class IsolatedMethod
         // We might also want to special-case some basic known parameter types and skip MessagePack
         // for them, instead using ShadowStack and the raw bytes
         Span<int> argAddresses = stackalloc int[1];
-        argAddresses[0] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param0));
-
         try
         {
+            argAddresses[0] = CopyArgument(param0);
             return _runtimeInstance.InvokeDotNetMethod<TRes>(_monoMethodPtr, instance, argAddresses);
         }
         finally
         {
-            _runtimeInstance.Free(argAddresses[0]);
+            FreeArguments(argAddresses);
         }
     }
 
     public TRes Invoke<T0, T1, TRes>(IsolatedObject? instance, T0 param0, T1 param1)
     {
         Span<int> argAddresses = stackalloc int[2];
-        argAddresses[0] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param0));
-        argAddresses[1] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param1));
-
         try
         {
+            argAddresses[0] = CopyArgument(param0);
+            argAddresses[1] = CopyArgument(param1);
             return _runtimeInstance.InvokeDotNetMethod<TRes>(_monoMethodPtr, instance, argAddresses);
         }
         finally
         {
-            _runtimeInstance.Free(argAddresses[0]);
-            _runtimeInstance.Free(argAddresses[1]);
+            FreeArguments(argAddresses);
         }
     }
 
     public TRes Invoke<T0, T1, T2, TRes>(IsolatedObject? instance, T0 param0, T1 param1, T2 param2)
     {
         Span<int> argAddresses = stackalloc int[3];
-        argAddresses[0] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param0));
-        argAddresses[1] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param1));
-        argAddresses[2] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param2));
-
         try
         {
+            argAddresses[0] = CopyArgument(param0);
+            argAddresses[1] = CopyArgument(param1);
+            argAddresses[2] = CopyArgument(param2);
             return _runtimeInstance.InvokeDotNetMethod<TRes>(_monoMethodPtr, instance, argAddresses);
         }
         finally
         {
-            _runtimeInstance.Free(argAddresses[0]);
-            _runtimeInstance.Free(argAddresses[1]);
-            _runtimeInstance.Free(argAddresses[2]);
+            FreeArguments(argAddresses);
         }
     }
 
     public TRes Invoke<T0, T1, T2, T3, TRes>(IsolatedObject? instance, T0 param0, T1 param1, T2 param2, T3 param3)
     {
         Span<int> argAddresses = stackalloc int[4];
-        argAddresses[0] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param0));
-        argAddresses[1] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param1));
-        argAddresses[2] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param2));
-        argAddresses[3] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param3));
-
         try
         {
+            argAddresses[0] = CopyArgument(param0);
+            argAddresses[1] = CopyArgument(param1);
+            argAddresses[2] = CopyArgument(param2);
+            argAddresses[3] = CopyArgument(param3);
             return _runtimeInstance.InvokeDotNetMethod<TRes>(_monoMethodPtr, instance, argAddresses);
         }
         finally
         {
-            _runtimeInstance.Free(argAddresses[0]);
-            _runtimeInstance.Free(argAddresses[1]);
-            _runtimeInstance.Free(argAddresses[2]);
-            _runtimeInstance.Free(argAddresses[3]);
+            FreeArguments(argAddresses);
         }
     }
 
     public TRes Invoke<T0, T1, T2, T3, T4, TRes>(IsolatedObject? instance, T0 param0, T1 param1, T2 param2, T3 param3, T4 param4)
     {
         Span<int> argAddresses = stackalloc int[5];
-        argAddresses[0] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param0));
-        argAddresses[1] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param1));
-        argAddresses[2] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param2));
-        argAddresses[3] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param3));
-        argAddresses[4] = _runtimeInstance.CopyValueLengthPrefixed(
-            MessagePackCompatibility.SerializeTypeless(param4));
-
         try
         {
+            argAddresses[0] = CopyArgument(param0);
+            argAddresses[1] = CopyArgument(param1);
+            argAddresses[2] = CopyArgument(param2);
+            argAddresses[3] = CopyArgument(param3);
+            argAddresses[4] = CopyArgument(param4);
             return _runtimeInstance.InvokeDotNetMethod<TRes>(_monoMethodPtr, instance, argAddresses);
         }
         finally
         {
-            _runtimeInstance.Free(argAddresses[0]);
-            _runtimeInstance.Free(argAddresses[1]);
-            _runtimeInstance.Free(argAddresses[2]);
-            _runtimeInstance.Free(argAddresses[3]);
-            _runtimeInstance.Free(argAddresses[4]);
+            FreeArguments(argAddresses);
         }
     }
 
