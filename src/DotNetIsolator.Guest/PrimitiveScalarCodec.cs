@@ -83,3 +83,42 @@ internal static class PrimitiveScalarCodec
             _ => throw new InvalidOperationException($"Unknown primitive scalar kind {kind}."),
         };
 }
+
+internal static class ScalarCodec<T>
+{
+    public static readonly int Kind = PrimitiveScalarCodec.GetKind(typeof(T));
+
+    public static long Pack(T value)
+    {
+        if (typeof(T) == typeof(bool)) { var v = System.Runtime.CompilerServices.Unsafe.As<T, bool>(ref value); return v ? 1L : 0L; }
+        if (typeof(T) == typeof(sbyte)) { var v = System.Runtime.CompilerServices.Unsafe.As<T, sbyte>(ref value); return (byte)v; }
+        if (typeof(T) == typeof(byte)) { var v = System.Runtime.CompilerServices.Unsafe.As<T, byte>(ref value); return v; }
+        if (typeof(T) == typeof(short)) { var v = System.Runtime.CompilerServices.Unsafe.As<T, short>(ref value); return (ushort)v; }
+        if (typeof(T) == typeof(ushort)) { var v = System.Runtime.CompilerServices.Unsafe.As<T, ushort>(ref value); return v; }
+        if (typeof(T) == typeof(char)) { var v = System.Runtime.CompilerServices.Unsafe.As<T, char>(ref value); return v; }
+        if (typeof(T) == typeof(int)) { var v = System.Runtime.CompilerServices.Unsafe.As<T, int>(ref value); return (uint)v; }
+        if (typeof(T) == typeof(uint)) { var v = System.Runtime.CompilerServices.Unsafe.As<T, uint>(ref value); return v; }
+        if (typeof(T) == typeof(long)) { var v = System.Runtime.CompilerServices.Unsafe.As<T, long>(ref value); return v; }
+        if (typeof(T) == typeof(ulong)) { var v = System.Runtime.CompilerServices.Unsafe.As<T, ulong>(ref value); return unchecked((long)v); }
+        if (typeof(T) == typeof(float)) { var v = System.Runtime.CompilerServices.Unsafe.As<T, float>(ref value); return BitConverter.SingleToUInt32Bits(v); }
+        if (typeof(T) == typeof(double)) { var v = System.Runtime.CompilerServices.Unsafe.As<T, double>(ref value); return BitConverter.DoubleToInt64Bits(v); }
+        throw new InvalidOperationException("Unsupported scalar type.");
+    }
+
+    public static T Unpack(long bits)
+    {
+        if (typeof(T) == typeof(bool)) { bool value = bits != 0; return System.Runtime.CompilerServices.Unsafe.As<bool, T>(ref value); }
+        if (typeof(T) == typeof(sbyte)) { sbyte value = unchecked((sbyte)bits); return System.Runtime.CompilerServices.Unsafe.As<sbyte, T>(ref value); }
+        if (typeof(T) == typeof(byte)) { byte value = (byte)bits; return System.Runtime.CompilerServices.Unsafe.As<byte, T>(ref value); }
+        if (typeof(T) == typeof(short)) { short value = (short)bits; return System.Runtime.CompilerServices.Unsafe.As<short, T>(ref value); }
+        if (typeof(T) == typeof(ushort)) { ushort value = (ushort)bits; return System.Runtime.CompilerServices.Unsafe.As<ushort, T>(ref value); }
+        if (typeof(T) == typeof(char)) { char value = (char)bits; return System.Runtime.CompilerServices.Unsafe.As<char, T>(ref value); }
+        if (typeof(T) == typeof(int)) { int value = (int)bits; return System.Runtime.CompilerServices.Unsafe.As<int, T>(ref value); }
+        if (typeof(T) == typeof(uint)) { uint value = (uint)bits; return System.Runtime.CompilerServices.Unsafe.As<uint, T>(ref value); }
+        if (typeof(T) == typeof(long)) { long value = bits; return System.Runtime.CompilerServices.Unsafe.As<long, T>(ref value); }
+        if (typeof(T) == typeof(ulong)) { ulong value = unchecked((ulong)bits); return System.Runtime.CompilerServices.Unsafe.As<ulong, T>(ref value); }
+        if (typeof(T) == typeof(float)) { float value = BitConverter.UInt32BitsToSingle((uint)bits); return System.Runtime.CompilerServices.Unsafe.As<float, T>(ref value); }
+        if (typeof(T) == typeof(double)) { double value = BitConverter.Int64BitsToDouble(bits); return System.Runtime.CompilerServices.Unsafe.As<double, T>(ref value); }
+        throw new InvalidOperationException("Unsupported scalar type.");
+    }
+}

@@ -1,4 +1,5 @@
 using DotNetIsolator.Internal;
+using System.Runtime.InteropServices;
 
 namespace DotNetIsolator;
 
@@ -84,29 +85,34 @@ public class IsolatedMethod
     private const int KindBoolean = 1, KindSByte = 2, KindByte = 3, KindInt16 = 4, KindUInt16 = 5, KindChar = 6,
         KindInt32 = 7, KindUInt32 = 8, KindInt64 = 9, KindUInt64 = 10, KindSingle = 11, KindDouble = 12;
 
-    // Routes exact (T[]) -> TRes calls for blittable primitive element types through the native
-    // zero-copy argument path. A null array falls back to the managed path so null is preserved.
-    private bool TryInvokeBlittableArrayArg<T0, TRes>(IsolatedObject? instance, T0 param0, out TRes result)
+    // Routes primitive arrays and lists through bulk argument transport. Null collections retain
+    // the managed fallback so their null value is preserved.
+    private bool TryInvokeBlittableArrayArg<T0, TRes>(IsolatedObject? instance, T0 param0, out TRes result, bool isVoid = false)
     {
-        if (typeof(T0) == typeof(int[])) return TryArrayArg<int, TRes>(instance, param0, KindInt32, out result);
-        if (typeof(T0) == typeof(uint[])) return TryArrayArg<uint, TRes>(instance, param0, KindUInt32, out result);
-        if (typeof(T0) == typeof(long[])) return TryArrayArg<long, TRes>(instance, param0, KindInt64, out result);
-        if (typeof(T0) == typeof(ulong[])) return TryArrayArg<ulong, TRes>(instance, param0, KindUInt64, out result);
-        if (typeof(T0) == typeof(short[])) return TryArrayArg<short, TRes>(instance, param0, KindInt16, out result);
-        if (typeof(T0) == typeof(ushort[])) return TryArrayArg<ushort, TRes>(instance, param0, KindUInt16, out result);
-        if (typeof(T0) == typeof(double[])) return TryArrayArg<double, TRes>(instance, param0, KindDouble, out result);
-        if (typeof(T0) == typeof(float[])) return TryArrayArg<float, TRes>(instance, param0, KindSingle, out result);
-        if (typeof(T0) == typeof(char[])) return TryArrayArg<char, TRes>(instance, param0, KindChar, out result);
-        if (typeof(T0) == typeof(bool[])) return TryArrayArg<bool, TRes>(instance, param0, KindBoolean, out result);
-        if (typeof(T0) == typeof(byte[])) return TryArrayArg<byte, TRes>(instance, param0, KindByte, out result);
-        if (typeof(T0) == typeof(sbyte[])) return TryArrayArg<sbyte, TRes>(instance, param0, KindSByte, out result);
+        if ((typeof(T0) == typeof(int[]) || typeof(T0) == typeof(List<int>))) return TryArrayArg<int, TRes>(instance, param0, KindInt32, out result, isVoid);
+        if ((typeof(T0) == typeof(uint[]) || typeof(T0) == typeof(List<uint>))) return TryArrayArg<uint, TRes>(instance, param0, KindUInt32, out result, isVoid);
+        if ((typeof(T0) == typeof(long[]) || typeof(T0) == typeof(List<long>))) return TryArrayArg<long, TRes>(instance, param0, KindInt64, out result, isVoid);
+        if ((typeof(T0) == typeof(ulong[]) || typeof(T0) == typeof(List<ulong>))) return TryArrayArg<ulong, TRes>(instance, param0, KindUInt64, out result, isVoid);
+        if ((typeof(T0) == typeof(short[]) || typeof(T0) == typeof(List<short>))) return TryArrayArg<short, TRes>(instance, param0, KindInt16, out result, isVoid);
+        if ((typeof(T0) == typeof(ushort[]) || typeof(T0) == typeof(List<ushort>))) return TryArrayArg<ushort, TRes>(instance, param0, KindUInt16, out result, isVoid);
+        if ((typeof(T0) == typeof(double[]) || typeof(T0) == typeof(List<double>))) return TryArrayArg<double, TRes>(instance, param0, KindDouble, out result, isVoid);
+        if ((typeof(T0) == typeof(float[]) || typeof(T0) == typeof(List<float>))) return TryArrayArg<float, TRes>(instance, param0, KindSingle, out result, isVoid);
+        if ((typeof(T0) == typeof(char[]) || typeof(T0) == typeof(List<char>))) return TryArrayArg<char, TRes>(instance, param0, KindChar, out result, isVoid);
+        if ((typeof(T0) == typeof(bool[]) || typeof(T0) == typeof(List<bool>))) return TryArrayArg<bool, TRes>(instance, param0, KindBoolean, out result, isVoid);
+        if ((typeof(T0) == typeof(byte[]) || typeof(T0) == typeof(List<byte>))) return TryArrayArg<byte, TRes>(instance, param0, KindByte, out result, isVoid);
+        if ((typeof(T0) == typeof(sbyte[]) || typeof(T0) == typeof(List<sbyte>))) return TryArrayArg<sbyte, TRes>(instance, param0, KindSByte, out result, isVoid);
 
         result = default!;
         return false;
     }
 
-    private bool TryArrayArg<T, TRes>(IsolatedObject? instance, object? param0, int elementKind, out TRes result) where T : unmanaged
+    private bool TryArrayArg<T, TRes>(IsolatedObject? instance, object? param0, int elementKind, out TRes result, bool isVoid) where T : unmanaged
     {
+        if (param0 is List<T> list)
+        {
+            result = _runtimeInstance.InvokeBlittableArrayArgMethod<T, TRes>(_monoMethodPtr, instance, CollectionsMarshal.AsSpan(list), elementKind, out var supported, isList: true, isVoid: isVoid);
+            return supported;
+        }
         if (param0 is not T[] array)
         {
             // Null (or unexpected) array: let the managed path serialize it so null is preserved.
@@ -114,7 +120,7 @@ public class IsolatedMethod
             return false;
         }
 
-        result = _runtimeInstance.InvokeBlittableArrayArgMethod<T, TRes>(_monoMethodPtr, instance, array, elementKind);
+        result = _runtimeInstance.InvokeBlittableArrayArgMethod<T, TRes>(_monoMethodPtr, instance, array, elementKind, out _, isVoid: isVoid);
         return true;
     }
 
@@ -176,7 +182,10 @@ public class IsolatedMethod
     }
 
     private int CopyArgument<T>(T value)
-        => _runtimeInstance.CopyValueLengthPrefixed(MessagePackCompatibility.SerializeTypeless(value));
+    {
+        using var buffer = ObjectGraphSerializer.SerializeWithTypeBuffer(value);
+        return _runtimeInstance.CopyValueLengthPrefixed(buffer.Span);
+    }
 
     private void FreeArguments(ReadOnlySpan<int> argAddresses)
     {
@@ -230,6 +239,11 @@ public class IsolatedMethod
 
     public TRes Invoke<T0, T1, TRes>(IsolatedObject? instance, T0 param0, T1 param1)
     {
+        if (TryPackScalarArg(param0, out var bits0, out var kind0) && TryPackScalarArg(param1, out var bits1, out var kind1) && TryGetScalarKind<TRes>(out var resultKind))
+        {
+            return UnpackScalarResult<TRes>(_runtimeInstance.InvokeScalarMethod2(_monoMethodPtr, instance, bits0, bits1, (kind0 << 0) | (kind1 << 8), resultKind));
+        }
+
         Span<int> argAddresses = stackalloc int[2];
         try
         {
@@ -245,6 +259,11 @@ public class IsolatedMethod
 
     public TRes Invoke<T0, T1, T2, TRes>(IsolatedObject? instance, T0 param0, T1 param1, T2 param2)
     {
+        if (TryPackScalarArg(param0, out var bits0, out var kind0) && TryPackScalarArg(param1, out var bits1, out var kind1) && TryPackScalarArg(param2, out var bits2, out var kind2) && TryGetScalarKind<TRes>(out var resultKind))
+        {
+            return UnpackScalarResult<TRes>(_runtimeInstance.InvokeScalarMethod3(_monoMethodPtr, instance, bits0, bits1, bits2, (kind0 << 0) | (kind1 << 8) | (kind2 << 16), resultKind));
+        }
+
         Span<int> argAddresses = stackalloc int[3];
         try
         {
@@ -261,6 +280,11 @@ public class IsolatedMethod
 
     public TRes Invoke<T0, T1, T2, T3, TRes>(IsolatedObject? instance, T0 param0, T1 param1, T2 param2, T3 param3)
     {
+        if (TryPackScalarArg(param0, out var bits0, out var kind0) && TryPackScalarArg(param1, out var bits1, out var kind1) && TryPackScalarArg(param2, out var bits2, out var kind2) && TryPackScalarArg(param3, out var bits3, out var kind3) && TryGetScalarKind<TRes>(out var resultKind))
+        {
+            return UnpackScalarResult<TRes>(_runtimeInstance.InvokeScalarMethod4(_monoMethodPtr, instance, bits0, bits1, bits2, bits3, (kind0 << 0) | (kind1 << 8) | (kind2 << 16) | (kind3 << 24), resultKind));
+        }
+
         Span<int> argAddresses = stackalloc int[4];
         try
         {
@@ -311,17 +335,40 @@ public class IsolatedMethod
             return;
         }
 
+        if (TryInvokeBlittableArrayArg<T0, object>(instance, param0, out _, isVoid: true)) return;
+
         Invoke<T0, object>(instance, param0);
     }
 
     public void InvokeVoid<T0, T1>(IsolatedObject? instance, T0 param0, T1 param1)
-        => Invoke<T0, T1, object>(instance, param0, param1);
+    {
+        if (TryPackScalarArg(param0, out var bits0, out var kind0) && TryPackScalarArg(param1, out var bits1, out var kind1))
+        {
+            _runtimeInstance.InvokeScalarMethod2(_monoMethodPtr, instance, bits0, bits1, (kind0 << 0) | (kind1 << 8), 0);
+            return;
+        }
+        Invoke<T0, T1, object>(instance, param0, param1);
+    }
 
     public void InvokeVoid<T0, T1, T2>(IsolatedObject? instance, T0 param0, T1 param1, T2 param2)
-        => Invoke<T0, T1, T2, object>(instance, param0, param1, param2);
+    {
+        if (TryPackScalarArg(param0, out var bits0, out var kind0) && TryPackScalarArg(param1, out var bits1, out var kind1) && TryPackScalarArg(param2, out var bits2, out var kind2))
+        {
+            _runtimeInstance.InvokeScalarMethod3(_monoMethodPtr, instance, bits0, bits1, bits2, (kind0 << 0) | (kind1 << 8) | (kind2 << 16), 0);
+            return;
+        }
+        Invoke<T0, T1, T2, object>(instance, param0, param1, param2);
+    }
 
     public void InvokeVoid<T0, T1, T2, T3>(IsolatedObject? instance, T0 param0, T1 param1, T2 param2, T3 param3)
-        => Invoke<T0, T1, T2, T3, object>(instance, param0, param1, param2, param3);
+    {
+        if (TryPackScalarArg(param0, out var bits0, out var kind0) && TryPackScalarArg(param1, out var bits1, out var kind1) && TryPackScalarArg(param2, out var bits2, out var kind2) && TryPackScalarArg(param3, out var bits3, out var kind3))
+        {
+            _runtimeInstance.InvokeScalarMethod4(_monoMethodPtr, instance, bits0, bits1, bits2, bits3, (kind0 << 0) | (kind1 << 8) | (kind2 << 16) | (kind3 << 24), 0);
+            return;
+        }
+        Invoke<T0, T1, T2, T3, object>(instance, param0, param1, param2, param3);
+    }
 
     public void InvokeVoid<T0, T1, T2, T3, T4>(IsolatedObject? instance, T0 param0, T1 param1, T2 param2, T3 param3, T4 param4)
         => Invoke<T0, T1, T2, T3, T4, object>(instance, param0, param1, param2, param3, param4);

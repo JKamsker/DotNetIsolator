@@ -9,18 +9,65 @@ internal static class ObjectGraphSerializer
     private const int MaxDepth = 128;
     private static readonly Encoding Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
-    // Serialization is synchronous and non-reentrant on a given thread, so reuse one writer per
-    // thread to avoid allocating a MemoryStream + BinaryWriter and regrowing the buffer on every
-    // call. The guest is single-threaded; the host gets one writer per worker thread.
-    [ThreadStatic] private static MemoryStream? _writeStream;
-    [ThreadStatic] private static BinaryWriter? _writeWriter;
+    // A writer is removed from the cache while borrowed, including during user getters.
+    // Reentrant serialization therefore gets independent storage.
+    [ThreadStatic] private static WriterState? _availableWriter;
+
+    private sealed class WriterState
+    {
+        public readonly MemoryStream Stream = new(256);
+        public readonly BinaryWriter Writer;
+        public WriterState() => Writer = new BinaryWriter(Stream, Encoding, leaveOpen: true);
+    }
+
+    internal sealed class BufferLease : IDisposable
+    {
+        private WriterState? _state;
+        public byte[] Buffer { get; }
+        public int Length { get; }
+        public ReadOnlySpan<byte> Span => Buffer.AsSpan(0, Length);
+
+        private BufferLease(WriterState state)
+        {
+            _state = state;
+            Buffer = state.Stream.GetBuffer();
+            Length = checked((int)state.Stream.Length);
+        }
+
+        public void Dispose()
+        {
+            var state = _state;
+            _state = null;
+            if (state is not null && _availableWriter is null) _availableWriter = state;
+        }
+
+        internal static BufferLease Write(Type? type, object? value, bool includeType)
+        {
+            var state = _availableWriter ?? new WriterState();
+            _availableWriter = null;
+            state.Stream.SetLength(0);
+            try
+            {
+                if (includeType) WriteTypedValue(state.Writer, value, 0);
+                else WriteValue(state.Writer, type!, value, 0);
+                state.Writer.Flush();
+                return new BufferLease(state);
+            }
+            catch
+            {
+                if (_availableWriter is null) _availableWriter = state;
+                throw;
+            }
+        }
+    }
+
+    public static BufferLease SerializeWithTypeBuffer(object? value) => BufferLease.Write(null, value, true);
+    public static BufferLease SerializeBuffer(Type type, object? value) => BufferLease.Write(type, value, false);
 
     public static byte[] SerializeWithType(object? value)
     {
-        var (stream, writer) = GetThreadWriter();
-        WriteTypedValue(writer, value, depth: 0);
-        writer.Flush();
-        return stream.ToArray();
+        using var buffer = SerializeWithTypeBuffer(value);
+        return buffer.Span.ToArray();
     }
 
     public static object? DeserializeWithType(ReadOnlyMemory<byte> value)
@@ -38,24 +85,8 @@ internal static class ObjectGraphSerializer
 
     public static byte[] Serialize(Type declaredType, object? value)
     {
-        var (stream, writer) = GetThreadWriter();
-        WriteValue(writer, declaredType, value, depth: 0);
-        writer.Flush();
-        return stream.ToArray();
-    }
-
-    private static (MemoryStream Stream, BinaryWriter Writer) GetThreadWriter()
-    {
-        var stream = _writeStream;
-        if (stream is null)
-        {
-            stream = new MemoryStream(256);
-            _writeStream = stream;
-            _writeWriter = new BinaryWriter(stream, Encoding);
-        }
-
-        stream.SetLength(0);
-        return (stream, _writeWriter!);
+        using var buffer = SerializeBuffer(declaredType, value);
+        return buffer.Span.ToArray();
     }
 
     public static object? Deserialize(Type declaredType, ReadOnlyMemory<byte> value)

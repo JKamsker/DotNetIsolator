@@ -385,7 +385,8 @@ public class IsolatedRuntimeHost : IDisposable
     {
         Linker.DefineFunction("dotnetisolator", "request_assembly", (CallerFunc<int, int, int, int, int>)HandleRequestAssembly);
         Linker.DefineFunction("dotnetisolator", "call_host", (CallerFunc<int, int, int, int, int>)HandleCallHost);
-        Linker.DefineFunction("dotnetisolator", "call_host_scalar", (CallerAction<int, int, int>)HandleCallHostScalar);
+        Linker.DefineFunction("dotnetisolator", "resolve_callback", (CallerFunc<int, int, int>)HandleResolveCallback);
+        Linker.DefineFunction("dotnetisolator", "call_host_scalar", (CallerAction<int, int>)HandleCallHostScalar);
     }
 
     private void ThrowIfDisposed()
@@ -396,7 +397,13 @@ public class IsolatedRuntimeHost : IDisposable
         }
     }
 
-    private void HandleCallHostScalar(Caller caller, int namePtr, int nameLen, int invocationPtr)
+    private int HandleResolveCallback(Caller caller, int namePtr, int nameLen)
+    {
+        var memory = caller.GetMemory("memory") ?? throw new InvalidOperationException("Caller lacks memory");
+        return IsolatedRuntime.FromStore(caller.Store).ResolveCallback(memory.ReadString(namePtr, nameLen));
+    }
+
+    private void HandleCallHostScalar(Caller caller, int callbackId, int invocationPtr)
     {
         var memory = caller.GetMemory("memory") ?? throw new InvalidOperationException("Caller lacks required export 'memory'");
         var span = memory.GetSpan(invocationPtr, Marshal.SizeOf<ScalarCallInvocation>());
@@ -405,8 +412,7 @@ public class IsolatedRuntimeHost : IDisposable
         try
         {
             var runtime = IsolatedRuntime.FromStore(caller.Store);
-            var name = memory.ReadString(namePtr, nameLen);
-            invocation.ResultBits = runtime.InvokeScalarCallback(name, invocation.ArgBits, invocation.ArgKind, invocation.ResultKind);
+            invocation.ResultBits = runtime.InvokeScalarCallback(callbackId, invocation.ArgBits, invocation.ArgKind, invocation.ResultKind);
         }
         catch (Exception ex)
         {

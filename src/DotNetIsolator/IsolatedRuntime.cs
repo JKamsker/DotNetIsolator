@@ -10,6 +10,9 @@ namespace DotNetIsolator;
 
 public class IsolatedRuntime : IDisposable
 {
+    private readonly Func<int, int, long, long, int, int, (long, int)> _invokeScalar2;
+    private readonly Func<int, int, long, long, long, int, int, (long, int)> _invokeScalar3;
+    private readonly Func<int, int, long, long, long, long, int, int, (long, int)> _invokeScalar4;
     private readonly Store _store;
     private readonly Instance _instance;
     private readonly Memory _memory;
@@ -18,7 +21,7 @@ public class IsolatedRuntime : IDisposable
     private readonly Func<int, int, int, int, int> _instantiateDotNetClass;
     private readonly Func<int, int, int, int, int, int, int> _lookupDotNetMethod;
     private readonly Func<int, int, int> _deserializeAsDotNetObject;
-    private readonly Func<int, int, long, int, int, int, long> _invokeScalarMethod;
+    private readonly Func<int, int, long, int, int, (long, int)> _invokeScalarMethod;
     private readonly Func<int, int, long, int, int> _invokeScalarVoidMethod;
     private readonly Action<int> _invokeScalarBatchMethod;
     private readonly Func<int, int, long> _invokeInt32MethodNoArgsPacked;
@@ -76,6 +79,9 @@ public class IsolatedRuntime : IDisposable
         _invokeBlittableArrayMethod = exports.InvokeBlittableArrayMethod;
         _invokeBlittableListMethod = exports.InvokeBlittableListMethod;
         _invokeBlittableArrayArgMethod = exports.InvokeBlittableArrayArgMethod;
+        _invokeScalar2 = exports.InvokeScalar2;
+        _invokeScalar3 = exports.InvokeScalar3;
+        _invokeScalar4 = exports.InvokeScalar4;
         _invokeScalarMethod = exports.InvokeScalarMethod;
         _invokeScalarVoidMethod = exports.InvokeScalarVoidMethod;
         _invokeScalarBatchMethod = exports.InvokeScalarBatchMethod;
@@ -143,8 +149,8 @@ public class IsolatedRuntime : IDisposable
 
     public IsolatedObject CopyObject<T>(T value)
     {
-        var serializedBytes = MessagePackCompatibility.SerializeTypeless(value);
-        var serializedBytesAddress = CopyValueLengthPrefixed(serializedBytes);
+        using var serializedBytes = ObjectGraphSerializer.SerializeWithTypeBuffer(value);
+        var serializedBytesAddress = CopyValueLengthPrefixed(serializedBytes.Span);
         var errorMessageBuf = _shadowStack.Push<int>();
         try
         {
@@ -280,33 +286,24 @@ public class IsolatedRuntime : IDisposable
         return UnpackInt32MethodResult(packedResult);
     }
 
-    // General primitive scalar fast path. The argument is bit-packed into argBits (argKind 0 means
-    // no argument) and the result is returned bit-packed. The guest validates the signature against
-    // the requested kinds. Errors are reported through a shadow-stack error slot.
-    internal long InvokeScalarMethod(int monoMethodPtr, IsolatedObject? instance, long argBits, int argKind, int resultKind)
+    // Both the value and error pointer return in Wasm registers.
+    internal long InvokeScalarMethod(int method, IsolatedObject? instance, long bits, int kind, int resultKind)
+        => ReadScalarResult(_invokeScalarMethod(instance?.GuestGCHandle ?? 0, method, bits, kind, resultKind));
+
+    internal long InvokeScalarMethod2(int method, IsolatedObject? instance, long a0, long a1, int kinds, int resultKind)
+        => ReadScalarResult(_invokeScalar2(instance?.GuestGCHandle ?? 0, method, a0, a1, kinds, resultKind));
+
+    internal long InvokeScalarMethod3(int method, IsolatedObject? instance, long a0, long a1, long a2, int kinds, int resultKind)
+        => ReadScalarResult(_invokeScalar3(instance?.GuestGCHandle ?? 0, method, a0, a1, a2, kinds, resultKind));
+
+    internal long InvokeScalarMethod4(int method, IsolatedObject? instance, long a0, long a1, long a2, long a3, int kinds, int resultKind)
+        => ReadScalarResult(_invokeScalar4(instance?.GuestGCHandle ?? 0, method, a0, a1, a2, a3, kinds, resultKind));
+
+    private long ReadScalarResult((long Bits, int Error) result)
     {
-        var errorParam = _shadowStack.Push<int>();
-        try
-        {
-            var resultBits = _invokeScalarMethod(
-                instance is null ? 0 : instance.GuestGCHandle,
-                monoMethodPtr,
-                argBits,
-                argKind,
-                resultKind,
-                errorParam.Address);
-
-            if (errorParam.Value != 0)
-            {
-                throw new IsolatedException(ReadDotNetString(errorParam.Value) ?? "The method call failed.");
-            }
-
-            return resultBits;
-        }
-        finally
-        {
-            errorParam.Pop();
-        }
+        if (result.Error != 0)
+            throw new IsolatedException(ReadDotNetString(result.Error) ?? "The method call failed.");
+        return result.Bits;
     }
 
     internal void InvokeScalarVoidMethod(int monoMethodPtr, IsolatedObject? instance, long argBits, int argKind)
@@ -562,12 +559,11 @@ public class IsolatedRuntime : IDisposable
         }
     }
 
-    // Zero-copy fast path for exact (T[]) -> TRes methods where T is a blittable primitive.
-    // The host copies the raw element bytes into a guest buffer once; the guest builds the managed
-    // array directly from those bytes, bypassing managed argument serialization. The return value is
-    // serialized through the normal path, so any return type is supported.
-    internal TRes InvokeBlittableArrayArgMethod<T, TRes>(int monoMethodPtr, IsolatedObject? instance, T[] arg, int elementKind) where T : unmanaged
+    // Copy a primitive array/list into fresh guest storage. Native scalar, void and array
+    // results avoid serialization; all other result types use the managed fallback.
+    internal TRes InvokeBlittableArrayArgMethod<T, TRes>(int monoMethodPtr, IsolatedObject? instance, ReadOnlySpan<T> arg, int elementKind, out bool supported, bool isList = false, bool isVoid = false) where T : unmanaged
     {
+        supported = true;
         var argDataPtr = arg.Length == 0 ? 0 : CopyValue<T>(arg, addLengthPrefix: false);
         var len = Marshal.SizeOf<BlittableArgInvocation>();
         var wasmPtr = _shadowStack.PushFrame(len);
@@ -583,6 +579,9 @@ public class IsolatedRuntime : IDisposable
                 ArgLength = arg.Length,
                 ArgElementSize = Unsafe.SizeOf<T>(),
                 ArgElementKind = elementKind,
+                ArgumentIsList = isList ? 1 : 0,
+                ResultKind = isVoid ? -1 : CollectionResult<TRes>.Kind,
+                ResultElementKind = CollectionResult<TRes>.ElementKind,
             };
 
             _invokeBlittableArrayArgMethod(wasmPtr);
@@ -590,6 +589,20 @@ public class IsolatedRuntime : IDisposable
             if (invocation.ResultException != 0)
             {
                 throw new IsolatedException(ReadDotNetString(invocation.ResultException));
+            }
+
+            if (invocation.ResultKind == -3)
+            {
+                supported = false;
+                return default!;
+            }
+            if (invocation.ResultKind > 0) return ScalarCodec<TRes>.Unpack(invocation.ResultBits);
+            if (invocation.ResultKind == -1) return default!;
+            if (invocation.ResultKind == -2)
+            {
+                if (invocation.ResultSerializedGCHandle == 0) return default!;
+                try { return CollectionResult<TRes>.Copy!(this, invocation.ResultSerialized, invocation.ResultSerializedLength); }
+                finally { ReleaseGCHandle(invocation.ResultSerializedGCHandle); }
             }
 
             if (invocation.ResultSerialized == 0)
@@ -622,6 +635,24 @@ public class IsolatedRuntime : IDisposable
                 Free(argDataPtr);
             }
         }
+    }
+
+    private static class CollectionResult<TResult>
+    {
+        public static readonly int ElementKind = typeof(TResult).IsArray && typeof(TResult).GetArrayRank() == 1
+            ? PrimitiveScalarCodec.GetKind(typeof(TResult).GetElementType()!) : 0;
+        public static readonly int Kind = ElementKind != 0 ? -2 : PrimitiveScalarCodec.GetKind(typeof(TResult));
+        public static readonly Func<IsolatedRuntime, int, int, TResult>? Copy = ElementKind == 0 ? null
+            : typeof(IsolatedRuntime).GetMethod(nameof(CopyCollectionArray), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+                .MakeGenericMethod(typeof(TResult).GetElementType()!)
+                .CreateDelegate<Func<IsolatedRuntime, int, int, TResult>>();
+    }
+
+    private static T[] CopyCollectionArray<T>(IsolatedRuntime runtime, int address, int length) where T : unmanaged
+    {
+        var result = new T[length];
+        if (length != 0) runtime._memory.GetSpan(address, checked(length * Unsafe.SizeOf<T>())).CopyTo(MemoryMarshal.AsBytes(result.AsSpan()));
+        return result;
     }
 
     private int UnpackInt32MethodResult(ulong packedResult)
@@ -801,8 +832,10 @@ public class IsolatedRuntime : IDisposable
         return declaringTypeName is null ? type.Name : $"{declaringTypeName}/{type.Name}";
     }
 
-    internal long InvokeScalarCallback(string name, long argBits, int argKind, int resultKind)
-        => _callbacks.InvokeScalar(name, argBits, argKind, resultKind);
+    internal int ResolveCallback(string name) => _callbacks.Resolve(name);
+
+    internal long InvokeScalarCallback(int callbackId, long argBits, int argKind, int resultKind)
+        => _callbacks.InvokeScalar(callbackId, argBits, argKind, resultKind);
 
     internal int AcceptCallFromGuest(int invocationPtr, int invocationLength, int resultPtrPtr, int resultLengthPtr)
     {

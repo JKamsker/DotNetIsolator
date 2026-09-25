@@ -46,7 +46,10 @@
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_i32_packed" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_i32_i32" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_i32_i32_packed" />
-		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_scalar" />
+		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_scalar_multi" />
+<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_scalar_2_multi" />
+<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_scalar_3_multi" />
+<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_scalar_4_multi" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_scalar_void" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_scalar_batch" />
 		<LinkerArg Include="-Wl,--export=dotnetisolator_invoke_void" />
@@ -60,12 +63,13 @@
 		<ItemGroup>
 			<_DotNetIsolatorNativeSource Include="native\assembly_search_hook.c" ObjectFile="$(_WasmIntermediateOutputPath)assembly_search_hook.o" />
 			<_DotNetIsolatorNativeSource Include="native\dotnetisolate.c" ObjectFile="$(_WasmIntermediateOutputPath)dotnetisolate.o" />
+			<_DotNetIsolatorNativeSource Include="native\scalar_multivalue.s" ObjectFile="$(_WasmIntermediateOutputPath)scalar_multivalue.o" />
 			<_DotNetIsolatorNativeSource Include="native\host_callback.c" ObjectFile="$(_WasmIntermediateOutputPath)host_callback.o" />
 		</ItemGroup>
 
 		<EmccCompile
 			SourceFiles="@(_DotNetIsolatorNativeSource)"
-			Arguments="&quot;@$(_WasmDefaultFlagsRsp)&quot; &quot;@$(_WasmCompileRsp)&quot;"
+			Arguments="-mmultivalue &quot;@$(_WasmDefaultFlagsRsp)&quot; &quot;@$(_WasmCompileRsp)&quot;"
 			CompilerBinaryPath="$(WasmClang)"
 			EnvironmentVariables="@(WasmToolchainEnvVars)"
 			DisableParallelCompile="$(DisableParallelEmccCompile)"

@@ -12,7 +12,11 @@ int dotnetisolator_call_host(void* invocation, int invocation_length, void** res
 // (de)serialization for callbacks whose argument (if any) and result are blittable primitives.
 __attribute__((import_module("dotnetisolator")))
 __attribute__((import_name("call_host_scalar")))
-void dotnetisolator_call_host_scalar(void* name, int name_len, void* invocation);
+void dotnetisolator_call_host_scalar(int callback_id, void* invocation);
+
+__attribute__((import_module("dotnetisolator")))
+__attribute__((import_name("resolve_callback")))
+int dotnetisolator_resolve_callback(void* name, int name_len);
 
 void dotnetisolator_free_host_call_result(void* result) {
 	free(result);
@@ -20,6 +24,7 @@ void dotnetisolator_free_host_call_result(void* result) {
 
 void dotnetisolator_add_host_callback_internal_calls() {
 	mono_add_internal_call("DotNetIsolator.Guest.Interop::CallHost", dotnetisolator_call_host);
+	mono_add_internal_call("DotNetIsolator.Guest.Interop::ResolveCallback", dotnetisolator_resolve_callback);
 	mono_add_internal_call("DotNetIsolator.Guest.Interop::CallHostScalar", dotnetisolator_call_host_scalar);
 	mono_add_internal_call("DotNetIsolator.Guest.Interop::FreeHostCallResult", dotnetisolator_free_host_call_result);
 }

@@ -10,6 +10,12 @@ internal static class Program
         CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
         CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
 
+        if (args.Contains("--fast-paths"))
+        {
+            FastPathBenchmarks.Run();
+            return 0;
+        }
+
         BenchmarkOptions options;
         try
         {

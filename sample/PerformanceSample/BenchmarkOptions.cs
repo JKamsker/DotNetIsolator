@@ -24,6 +24,7 @@ internal sealed record BenchmarkOptions(
           dotnet run -c Release --project sample\PerformanceSample\PerformanceSample.csproj -- [options]
 
         Options:
+          --fast-paths              Fixed warm fast-path suite (five samples, host allocations).
           --host-iterations <n>      Direct host calls to measure. Default: 10000000.
           --isolated-iterations <n>  Isolated warm-runtime calls to measure. Default: 2000.
           --zero-arg-iterations <n>  Zero-arg int return calls to measure. Default: 2000.

@@ -116,6 +116,17 @@ public sealed class BenchmarkTarget
     public int CallRawBufferCallback()
         => DotNetIsolatorHost.InvokeRaw("raw-buffer-callback", _largeBuffer).Length;
 
+    public int Add2(int a, int b) => a + b;
+    public double Add3(int a, double b, long c) => a + b + c;
+    public long Add4(int a, long b, short c, byte d) => a + b + c + d;
+    public int ArrayLength(double[] values) => values.Length;
+    public void ConsumeArray(double[] values) => _consumedValue = values.Length;
+    public double[] EchoArray(double[] values) => values;
+    public int ListCount(List<double> values) => values.Count;
+    public NestedPayload EchoNested(NestedPayload value) => value;
+    public int CallTypedIncrementCallback(int value)
+        => DotNetIsolatorHost.Invoke<int, int>("increment-callback", value);
+
     private static byte[] CreateBuffer(int length)
     {
         var buffer = new byte[length];
@@ -185,4 +196,10 @@ public sealed class BenchmarkPayload
     public bool IsValid { get; set; }
 
     public long Checksum { get; set; }
+}
+
+public sealed class NestedPayload
+{
+    public List<BenchmarkPayload> Items { get; set; } = new();
+    public double[] Values { get; set; } = Array.Empty<double>();
 }

@@ -7,6 +7,7 @@
 #include <mono/metadata/class.h>
 #include <mono/metadata/metadata.h>
 #include <mono/metadata/object.h>
+#include <mono/metadata/reflection.h>
 #include <wasm/driver.h>
 
 // Declared by the mono embedding API but not surfaced in the .NET 10 WASI driver headers.
@@ -61,6 +62,11 @@ typedef struct BlittableArgInvocation {
 	void* result_serialized;
 	int result_serialized_length;
 	MonoGCHandle result_serialized_handle;
+	int argument_is_list;
+	int result_kind;
+	int result_element_kind;
+	int reserved;
+	uint64_t result_bits;
 } BlittableArgInvocation;
 
 __attribute__((export_name("dotnetisolator_instantiate_class")))
@@ -88,9 +94,33 @@ MonoGCHandle dotnetisolator_instantiate_class(char* assembly_name, char* namespa
 	return result;
 }
 
+// Only managed serialized buffers have a lease. Entries are recycled after release, and
+// normally there is just one live entry; nested host calls may keep several outstanding.
+typedef struct SerializedBufferLease {
+	MonoGCHandle handle;
+	struct SerializedBufferLease* next;
+} SerializedBufferLease;
+static SerializedBufferLease* serialized_leases;
+static SerializedBufferLease* free_serialized_leases;
+static MonoMethod* release_serialized_buffer;
+
 __attribute__((export_name("dotnetisolator_release_object")))
 void dotnetisolator_release_object(MonoGCHandle gcHandle) {
 	if (gcHandle) {
+		SerializedBufferLease** link = &serialized_leases;
+		while (*link) {
+			SerializedBufferLease* lease = *link;
+			if (lease->handle == gcHandle) {
+				*link = lease->next;
+				lease->next = free_serialized_leases;
+				free_serialized_leases = lease;
+				void* params[] = { mono_gchandle_get_target((uint32_t)gcHandle) };
+				MonoObject* ignored = NULL;
+				mono_runtime_invoke(release_serialized_buffer, NULL, params, &ignored);
+				break;
+			}
+			link = &lease->next;
+		}
 		mono_gchandle_free((uint32_t)gcHandle);
 	}
 }
@@ -249,6 +279,7 @@ int kind_size(int kind) {
 
 // Returns 1 if the MonoType is exactly the primitive identified by the element-kind tag.
 int mono_type_matches_kind(MonoType* type, int kind) {
+	if (mono_type_is_byref(type)) return 0;
 	int mt = mono_type_get_type(type);
 	switch (kind) {
 		case 1: return mt == MONO_TYPE_BOOLEAN;
@@ -317,24 +348,6 @@ int method_signature_is_byte_array(MonoMethod* method) {
 	MonoClass* array_class = mono_class_from_mono_type(return_type);
 	MonoClass* element_class = mono_class_get_element_class(array_class);
 	return element_class == mono_get_byte_class();
-}
-
-int method_signature_is_blittable_array_arg(MonoMethod* method, int element_kind) {
-	MonoMethodSignature* signature = mono_method_signature(method);
-	if (mono_signature_get_param_count(signature) != 1) {
-		return 0;
-	}
-
-	void* iterator = NULL;
-	MonoType* parameter_type = mono_signature_get_params(signature, &iterator);
-	if (mono_type_get_type(parameter_type) != MONO_TYPE_SZARRAY) {
-		return 0;
-	}
-
-	MonoClass* expected_element_class = element_class_for_kind(element_kind);
-	MonoClass* array_class = mono_class_from_mono_type(parameter_type);
-	MonoClass* actual_element_class = mono_class_get_element_class(array_class);
-	return expected_element_class && actual_element_class == expected_element_class;
 }
 
 void* deserialize_param(void* length_prefixed_buffer, MonoGCHandle* value_handle, MonoObject** exception_buf) {
@@ -673,7 +686,10 @@ void serialize_value_into(MonoObject* value, void** out_data, int* out_length, M
 		serialize_return_value_dotnet_method = lookup_dotnet_method("DotNetIsolator.WasmApp", "DotNetIsolator.WasmApp", "Serialization", "Serialize", -1);
 	}
 
-	void* method_params[] = { value };
+	if (!release_serialized_buffer)
+		release_serialized_buffer = lookup_dotnet_method("DotNetIsolator.WasmApp", "DotNetIsolator.WasmApp", "Serialization", "Release", 1);
+	int length = 0;
+	void* method_params[] = { value, &length };
 	MonoObject* byte_array = mono_runtime_invoke(serialize_return_value_dotnet_method, NULL, method_params, exception_buf);
 
 	if (*exception_buf || !byte_array) {
@@ -683,18 +699,22 @@ void serialize_value_into(MonoObject* value, void** out_data, int* out_length, M
 		return;
 	}
 
-	uintptr_t byte_array_length = mono_array_length((MonoArray*)byte_array);
-	if (byte_array_length > INT32_MAX) {
-		*out_data = NULL;
-		*out_length = 0;
-		*out_handle = NULL;
-		*exception_buf = (MonoObject*)mono_string_new_wrapper("The serialized result is too large.");
+	SerializedBufferLease* lease = free_serialized_leases;
+	if (lease) free_serialized_leases = lease->next;
+	else lease = malloc(sizeof(SerializedBufferLease));
+	if (!lease) {
+		void* params[] = { byte_array };
+		MonoObject* ignored = NULL;
+		mono_runtime_invoke(release_serialized_buffer, NULL, params, &ignored);
+		*exception_buf = (MonoObject*)mono_string_new_wrapper("Could not allocate serialized result lease.");
 		return;
 	}
-
+	*out_handle = (MonoGCHandle)mono_gchandle_new(byte_array, 1);
 	*out_data = mono_array_addr_with_size((MonoArray*)byte_array, 1, 0);
-	*out_length = (int)byte_array_length;
-	*out_handle = (MonoGCHandle)mono_gchandle_new(byte_array, /* pinned */ 1);
+	*out_length = length;
+	lease->handle = *out_handle;
+	lease->next = serialized_leases;
+	serialized_leases = lease;
 }
 
 void serialize_return_value(MonoObject* value, RunnerInvocation* invocation, MonoObject** exception_buf) {
@@ -1067,9 +1087,8 @@ void dotnetisolator_invoke_blittable_list(BlittableArrayInvocationResult* result
 	invoke_blittable_list(target, method_ptr, result);
 }
 
-// Zero-copy fast path for exact (T[]) -> TRes methods where T is a blittable primitive. The host
-// supplies the raw element bytes; the guest materializes a managed array directly via mono_array_new
-// plus a single memcpy, invokes the method, and serializes the result through the normal path.
+// Bulk argument path for T[] and List<T>. Scalar, void and primitive-array results bypass
+// serialization; other result shapes keep the object-graph fallback.
 __attribute__((export_name("dotnetisolator_invoke_blittable_array_arg")))
 void dotnetisolator_invoke_blittable_array_arg(BlittableArgInvocation* invocation) {
 	invocation->result_exception = NULL;
@@ -1104,8 +1123,51 @@ void dotnetisolator_invoke_blittable_array_arg(BlittableArgInvocation* invocatio
 		return;
 	}
 
-	if (!method_signature_is_blittable_array_arg(invocation->method_ptr, invocation->arg_element_kind)) {
-		invocation->result_exception = mono_string_new_wrapper("The method does not have the required blittable primitive array argument signature.");
+	MonoMethodSignature* signature = mono_method_signature(invocation->method_ptr);
+	void* iterator = NULL;
+	MonoType* parameter = mono_signature_get_param_count(signature) == 1
+		? mono_signature_get_params(signature, &iterator) : NULL;
+	MonoClass* list_class = NULL;
+	MonoClassField* items_field = NULL;
+	MonoClassField* size_field = NULL;
+	int valid = parameter && !mono_type_is_byref(parameter);
+	if (valid && invocation->argument_is_list) {
+		list_class = mono_class_from_mono_type(parameter);
+		valid = !strcmp(mono_class_get_name(list_class), "List`1")
+			&& !strcmp(mono_class_get_namespace(list_class), "System.Collections.Generic")
+			&& mono_class_get_image(list_class) == mono_class_get_image(mono_get_object_class());
+		if (!valid) {
+			// The public type can be List<T> while the method accepts an interface or
+			// object. Preserve those existing calls through the managed fallback.
+			invocation->result_kind = -3;
+			return;
+		}
+		if (valid) {
+			items_field = mono_class_get_field_from_name(list_class, "_items");
+			size_field = mono_class_get_field_from_name(list_class, "_size");
+			valid = items_field && size_field;
+			if (valid) {
+				MonoClass* items_class = mono_class_from_mono_type(mono_field_get_type(items_field));
+				valid = mono_class_get_element_class(items_class) == element_class;
+			}
+		}
+	} else if (valid) {
+		valid = mono_type_get_type(parameter) == MONO_TYPE_SZARRAY
+			&& mono_class_get_element_class(mono_class_from_mono_type(parameter)) == element_class;
+	}
+	if (!valid) {
+		invocation->result_exception = mono_string_new_wrapper("The method does not have the required blittable collection argument signature.");
+		return;
+	}
+	MonoType* return_type = mono_signature_get_return_type(signature);
+	int result_kind = invocation->result_kind;
+	valid = result_kind == 0
+		|| (result_kind == -1 && mono_type_get_type(return_type) == MONO_TYPE_VOID)
+		|| (result_kind > 0 && mono_type_matches_kind(return_type, result_kind))
+		|| (result_kind == -2 && !mono_type_is_byref(return_type) && mono_type_get_type(return_type) == MONO_TYPE_SZARRAY
+			&& mono_class_get_element_class(mono_class_from_mono_type(return_type)) == element_class_for_kind(invocation->result_element_kind));
+	if (!valid) {
+		invocation->result_exception = mono_string_new_wrapper("The method does not have the requested collection result signature.");
 		return;
 	}
 
@@ -1120,13 +1182,39 @@ void dotnetisolator_invoke_blittable_array_arg(BlittableArgInvocation* invocatio
 
 	MonoObject* exc = NULL;
 	MonoObject* target = invocation->target ? mono_gchandle_get_target((uint32_t)invocation->target) : 0;
-	void* method_params[] = { array };
+	MonoObject* argument = (MonoObject*)array;
+	MonoGCHandle list_handle = NULL;
+	if (invocation->argument_is_list) {
+		argument = mono_object_new(mono_domain_get(), list_class);
+		list_handle = (MonoGCHandle)mono_gchandle_new(argument, 1);
+		// A new List<T> has zero version; install the fresh backing array with the GC write barrier.
+		mono_field_set_value(argument, items_field, array);
+		mono_field_set_value(argument, size_field, &invocation->arg_length);
+	}
+	void* method_params[] = { argument };
 	MonoObject* result = mono_runtime_invoke(invocation->method_ptr, target, method_params, &exc);
 
 	if (!exc) {
-		serialize_value_into(result, &invocation->result_serialized, &invocation->result_serialized_length, &invocation->result_serialized_handle, &exc);
+		if (result_kind > 0) {
+			invocation->result_bits = 0;
+			memcpy(&invocation->result_bits, mono_object_unbox(result), kind_size(result_kind));
+		} else if (result_kind == -2 && result) {
+			MonoArray* result_array = (MonoArray*)result;
+			uintptr_t length = mono_array_length(result_array);
+			int size = kind_size(invocation->result_element_kind);
+			if (length > INT32_MAX / size) {
+				invocation->result_exception = mono_string_new_wrapper("The array result is too large.");
+			} else {
+				invocation->result_serialized_handle = (MonoGCHandle)mono_gchandle_new(result, 1);
+				invocation->result_serialized_length = (int)length;
+				invocation->result_serialized = length ? mono_array_addr_with_size(result_array, size, 0) : NULL;
+			}
+		} else if (result_kind == 0) {
+			serialize_value_into(result, &invocation->result_serialized, &invocation->result_serialized_length, &invocation->result_serialized_handle, &exc);
+		}
 	}
 
+	if (list_handle) mono_gchandle_free((uint32_t)list_handle);
 	mono_gchandle_free((uint32_t)array_handle);
 
 	if (exc) {
@@ -1217,11 +1305,62 @@ uint64_t dotnetisolator_invoke_scalar(MonoGCHandle target, MonoMethod* method_pt
 	return result_bits;
 }
 
-// Batched primitive scalar invocation. Runs the same (T) -> TRes or () -> TRes method once per
-// element in a single boundary crossing: reads each argument from a contiguous host-provided buffer,
-// invokes the method, and writes each result to a contiguous result buffer. The signature is
-// validated once. This amortizes the host/guest boundary and host-side per-call overhead across the
-// whole batch.
+// Each kind occupies one byte. Values stay in registers until Mono takes their addresses.
+static uint64_t invoke_scalar_many(MonoGCHandle target, MonoMethod* method, uint64_t* bits,
+	int count, int kinds, int result_kind, MonoString** error) {
+	*error = NULL;
+	MonoMethodSignature* signature = mono_method_signature(method);
+	if ((int)mono_signature_get_param_count(signature) != count) {
+		*error = mono_string_new_wrapper("The method does not match the requested scalar parameter count.");
+		return 0;
+	}
+	void* iterator = NULL;
+	void* args[4];
+	for (int i = 0; i < count; i++) {
+		if (!mono_type_matches_kind(mono_signature_get_params(signature, &iterator), (kinds >> (8*i)) & 255)) {
+			*error = mono_string_new_wrapper("The method does not match the requested scalar argument type.");
+			return 0;
+		}
+		args[i] = &bits[i];
+	}
+	MonoType* result_type = mono_signature_get_return_type(signature);
+	if (result_kind == 0 ? mono_type_get_type(result_type) != MONO_TYPE_VOID
+		: !mono_type_matches_kind(result_type, result_kind)) {
+		*error = mono_string_new_wrapper("The method does not match the requested scalar return type.");
+		return 0;
+	}
+	MonoObject* exc = NULL;
+	MonoObject* obj = target ? mono_gchandle_get_target((uint32_t)target) : NULL;
+	MonoObject* result = mono_runtime_invoke(method, obj, args, &exc);
+	if (exc) {
+		MonoObject* ignored = NULL;
+		*error = mono_object_to_string(exc, &ignored);
+		return 0;
+	}
+	uint64_t value = 0;
+	if (result_kind == 0) return 0;
+	if (result) memcpy(&value, mono_object_unbox(result), kind_size(result_kind));
+	else *error = mono_string_new_wrapper("The scalar method returned null.");
+	return value;
+}
+
+uint64_t dotnetisolator_invoke_scalar_2(MonoGCHandle target, MonoMethod* method, uint64_t a0, uint64_t a1, int kinds, int result_kind, MonoString** error) {
+	uint64_t bits[] = { a0, a1 };
+	return invoke_scalar_many(target, method, bits, 2, kinds, result_kind, error);
+}
+
+uint64_t dotnetisolator_invoke_scalar_3(MonoGCHandle target, MonoMethod* method, uint64_t a0, uint64_t a1, uint64_t a2, int kinds, int result_kind, MonoString** error) {
+	uint64_t bits[] = { a0, a1, a2 };
+	return invoke_scalar_many(target, method, bits, 3, kinds, result_kind, error);
+}
+
+uint64_t dotnetisolator_invoke_scalar_4(MonoGCHandle target, MonoMethod* method, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, int kinds, int result_kind, MonoString** error) {
+	uint64_t bits[] = { a0, a1, a2, a3 };
+	return invoke_scalar_many(target, method, bits, 4, kinds, result_kind, error);
+}
+
+// Validate once and enter the managed dispatcher once per batch. Its cached typed delegate
+// runs the inner loop without per-element mono_runtime_invoke or boxed results.
 __attribute__((export_name("dotnetisolator_invoke_scalar_batch")))
 void dotnetisolator_invoke_scalar_batch(BatchInvocation* invocation) {
 	invocation->error_msg = NULL;
@@ -1253,35 +1392,18 @@ void dotnetisolator_invoke_scalar_batch(BatchInvocation* invocation) {
 		return;
 	}
 
-	int arg_size = kind_size(arg_kind);
-	int result_size = kind_size(result_kind);
-	MonoObject* target_object = invocation->target ? mono_gchandle_get_target((uint32_t)invocation->target) : 0;
-	char* args_bytes = (char*)invocation->args;
-	char* results_bytes = (char*)invocation->results;
-
-	for (int i = 0; i < count; i++) {
-		void* method_params[1];
-		void** method_params_ptr = NULL;
-		if (arg_kind != 0) {
-			method_params[0] = args_bytes + (size_t)i * (size_t)arg_size;
-			method_params_ptr = method_params;
-		}
-
-		MonoObject* exc = NULL;
-		MonoObject* result_object = mono_runtime_invoke(method_ptr, target_object, method_params_ptr, &exc);
-
-		if (exc) {
-			MonoObject* ignored_tostring_exception;
-			invocation->error_msg = mono_object_to_string(exc, &ignored_tostring_exception);
-			return;
-		}
-
-		if (!result_object) {
-			invocation->error_msg = mono_string_new_wrapper("A batch scalar call returned null instead of a value type.");
-			return;
-		}
-
-		memcpy(results_bytes + (size_t)i * (size_t)result_size, mono_object_unbox(result_object), result_size);
+	static MonoMethod* dispatcher = NULL;
+	if (!dispatcher) dispatcher = lookup_dotnet_method("DotNetIsolator.WasmApp", "DotNetIsolator.WasmApp", "BatchDispatcher", "Run", 5);
+	MonoObject* method = (MonoObject*)mono_method_get_object(mono_domain_get(), method_ptr, NULL);
+	MonoGCHandle method_handle = (MonoGCHandle)mono_gchandle_new(method, 0);
+	MonoObject* target = invocation->target ? mono_gchandle_get_target((uint32_t)invocation->target) : NULL;
+	void* params[] = { method, target, &invocation->args, &invocation->results, &count };
+	MonoObject* exc = NULL;
+	mono_runtime_invoke(dispatcher, NULL, params, &exc);
+	mono_gchandle_free((uint32_t)method_handle);
+	if (exc) {
+		MonoObject* ignored = NULL;
+		invocation->error_msg = mono_object_to_string(exc, &ignored);
 	}
 }
 

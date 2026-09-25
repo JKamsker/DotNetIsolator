@@ -15,7 +15,7 @@ internal sealed class IsolatedRuntimeExports
         Action<int, int, int> invokeBlittableArrayMethod,
         Action<int, int, int> invokeBlittableListMethod,
         Action<int> invokeBlittableArrayArgMethod,
-        Func<int, int, long, int, int, int, long> invokeScalarMethod,
+        Func<int, int, long, int, int, (long, int)> invokeScalarMethod,
         Func<int, int, long, int, int> invokeScalarVoidMethod,
         Action<int> invokeScalarBatchMethod,
         Func<int, int, long> invokeInt32MethodNoArgsPacked,
@@ -24,6 +24,9 @@ internal sealed class IsolatedRuntimeExports
         Func<int, int, int, int> invokeVoidMethodInt32,
         Action<int> invokeDotNetMethod,
         Action<int> releaseObject,
+        Func<int, int, long, long, int, int, (long, int)> invokeScalar2,
+        Func<int, int, long, long, long, int, int, (long, int)> invokeScalar3,
+        Func<int, int, long, long, long, long, int, int, (long, int)> invokeScalar4,
         Action start)
     {
         Memory = memory;
@@ -45,6 +48,9 @@ internal sealed class IsolatedRuntimeExports
         InvokeVoidMethodInt32 = invokeVoidMethodInt32;
         InvokeDotNetMethod = invokeDotNetMethod;
         ReleaseObject = releaseObject;
+        InvokeScalar2 = invokeScalar2;
+        InvokeScalar3 = invokeScalar3;
+        InvokeScalar4 = invokeScalar4;
         Start = start;
     }
 
@@ -58,7 +64,7 @@ internal sealed class IsolatedRuntimeExports
     public Action<int, int, int> InvokeBlittableArrayMethod { get; }
     public Action<int, int, int> InvokeBlittableListMethod { get; }
     public Action<int> InvokeBlittableArrayArgMethod { get; }
-    public Func<int, int, long, int, int, int, long> InvokeScalarMethod { get; }
+    public Func<int, int, long, int, int, (long, int)> InvokeScalarMethod { get; }
     public Func<int, int, long, int, int> InvokeScalarVoidMethod { get; }
     public Action<int> InvokeScalarBatchMethod { get; }
     public Func<int, int, long> InvokeInt32MethodNoArgsPacked { get; }
@@ -67,6 +73,9 @@ internal sealed class IsolatedRuntimeExports
     public Func<int, int, int, int> InvokeVoidMethodInt32 { get; }
     public Action<int> InvokeDotNetMethod { get; }
     public Action<int> ReleaseObject { get; }
+    public Func<int, int, long, long, int, int, (long, int)> InvokeScalar2 { get; }
+    public Func<int, int, long, long, long, int, int, (long, int)> InvokeScalar3 { get; }
+    public Func<int, int, long, long, long, long, int, int, (long, int)> InvokeScalar4 { get; }
     public Action Start { get; }
 
     public static IsolatedRuntimeExports Bind(Instance instance)
@@ -91,8 +100,8 @@ internal sealed class IsolatedRuntimeExports
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_blittable_list'");
         var invokeBlittableArrayArgMethod = instance.GetAction<int>("dotnetisolator_invoke_blittable_array_arg")
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_blittable_array_arg'");
-        var invokeScalarMethod = instance.GetFunction<int, int, long, int, int, int, long>("dotnetisolator_invoke_scalar")
-            ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_scalar'");
+        var invokeScalarMethod = instance.GetFunction<int, int, long, int, int, (long, int)>("dotnetisolator_invoke_scalar_multi")
+            ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_scalar_multi'");
         var invokeScalarVoidMethod = instance.GetFunction<int, int, long, int, int>("dotnetisolator_invoke_scalar_void")
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_scalar_void'");
         var invokeScalarBatchMethod = instance.GetAction<int>("dotnetisolator_invoke_scalar_batch")
@@ -109,6 +118,12 @@ internal sealed class IsolatedRuntimeExports
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_invoke_method'");
         var releaseObject = instance.GetAction<int>("dotnetisolator_release_object")
             ?? throw new InvalidOperationException("Missing required export 'dotnetisolator_release_object'");
+        var invokeScalar2 = instance.GetFunction<int, int, long, long, int, int, (long, int)>("dotnetisolator_invoke_scalar_2_multi")
+            ?? throw new InvalidOperationException("Missing scalar 2 export");
+        var invokeScalar3 = instance.GetFunction<int, int, long, long, long, int, int, (long, int)>("dotnetisolator_invoke_scalar_3_multi")
+            ?? throw new InvalidOperationException("Missing scalar 3 export");
+        var invokeScalar4 = instance.GetFunction<int, int, long, long, long, long, int, int, (long, int)>("dotnetisolator_invoke_scalar_4_multi")
+            ?? throw new InvalidOperationException("Missing scalar 4 export");
         var start = instance.GetAction("_start")
             ?? throw new InvalidOperationException("Couldn't find export '_start'");
 
@@ -132,6 +147,9 @@ internal sealed class IsolatedRuntimeExports
             invokeVoidMethodInt32,
             invokeDotNetMethod,
             releaseObject,
+            invokeScalar2,
+            invokeScalar3,
+            invokeScalar4,
             start);
     }
 }

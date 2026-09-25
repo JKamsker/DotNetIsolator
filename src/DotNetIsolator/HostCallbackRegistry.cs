@@ -12,6 +12,11 @@ internal sealed class HostCallbackRegistry
 
     private readonly Dictionary<string, RegisteredCallback> _callbacks = new();
 
+    private readonly Dictionary<string, int> _callbackIds = new(StringComparer.Ordinal);
+    private readonly List<RegisteredCallback> _callbacksById = new();
+
+    public int Resolve(string name) => _callbackIds.GetValueOrDefault(name);
+
     public void Add(string name, Delegate callback)
     {
         if (callback is null)
@@ -19,7 +24,10 @@ internal sealed class HostCallbackRegistry
             throw new ArgumentNullException(nameof(callback));
         }
 
-        _callbacks.Add(name, RegisteredCallback.Create(callback));
+        var registered = RegisteredCallback.Create(callback);
+        _callbacks.Add(name, registered);
+        _callbacksById.Add(registered);
+        _callbackIds.Add(name, _callbacksById.Count);
     }
 
     public HostCallbackResponse Invoke(ReadOnlyMemory<byte> invocationBytes)
@@ -50,14 +58,14 @@ internal sealed class HostCallbackRegistry
         }
     }
 
-    public long InvokeScalar(string callbackName, long argBits, int argKind, int resultKind)
+    public long InvokeScalar(int callbackId, long argBits, int argKind, int resultKind)
     {
-        if (!_callbacks.TryGetValue(callbackName, out var callback))
+        if ((uint)(callbackId - 1) >= (uint)_callbacksById.Count)
         {
-            throw new InvalidOperationException($"There is no registered callback with name '{callbackName}'");
+            throw new InvalidOperationException($"There is no registered callback with ID {callbackId}");
         }
 
-        var result = callback.InvokeScalar(argBits, argKind, resultKind)
+        var result = _callbacksById[callbackId - 1].InvokeScalar(argBits, argKind, resultKind)
             ?? throw new InvalidOperationException("The callback does not have a scalar-compatible signature.");
 
         return result;
@@ -196,7 +204,7 @@ internal sealed class RegisteredCallback
                 throw new InvalidOperationException("The scalar callback signature does not match the guest request.");
             }
 
-            return PrimitiveScalarCodec.Pack(typedCallback()!, resultKind);
+            return ScalarCodec<TRes>.Pack(typedCallback());
         };
     }
 
@@ -214,8 +222,8 @@ internal sealed class RegisteredCallback
                 throw new InvalidOperationException("The scalar callback signature does not match the guest request.");
             }
 
-            var arg = (TArg)PrimitiveScalarCodec.Unpack(argBits, argKind);
-            return PrimitiveScalarCodec.Pack(typedCallback(arg)!, resultKind);
+            var arg = ScalarCodec<TArg>.Unpack(argBits);
+            return ScalarCodec<TRes>.Pack(typedCallback(arg));
         };
     }
 

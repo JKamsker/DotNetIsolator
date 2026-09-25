@@ -1,12 +1,16 @@
 # Performance
 
+The latest scalar, callback, collection, serialization and batch measurements are
+in [the September 2026 fast-path report](performance-2026-09-25.md). Earlier
+measurements below are retained as historical comparisons on a different machine.
+
 DotNetIsolator has two separate costs:
 
 1. Cold setup creates a Wasmtime engine, compiles or deserializes the bundled
    `DotNetIsolator.WasmApp.wasm` module, instantiates the module, and starts the
    .NET WASI runtime.
-2. Warm calls cross the host/guest boundary and serialize arguments and return
-   values with MessagePack.
+2. Warm calls cross the host/guest boundary. Primitive scalars and bulk primitive
+   collections use native transport; other shapes use object-graph serialization.
 
 The practical guidance is to create one `IsolatedRuntimeHost`, keep
 `IsolatedRuntime` instances warm when possible, and reuse `IsolatedMethod`
@@ -116,9 +120,9 @@ but it is far too expensive for primitive calls. DotNetIsolator now has a native
 `mono_runtime_invoke`, unboxes the integer result in native code, and only uses
 the existing managed serialization path for other shapes.
 
-This is intentionally narrow. It preserves existing behavior for complex
-arguments and return values, while proving that the boundary can be made much
-cheaper for common scalar signatures.
+The original int-only path has since expanded to all twelve primitive scalar
+types, including mixed signatures with up to four arguments and void returns.
+Complex signatures retain the serializer fallback.
 
 An intermediate version reserved one two-slot shadow-stack frame per call
 instead of pushing two typed entries. The current scalar path removes that result
@@ -137,7 +141,32 @@ transported back over an already-authorized export call.
 
 ### Accepted
 
-The following paths were tested and kept:
+The September 2026 additions are:
+
+* Wasm multi-value scalar returns: small LLVM Wasm assembly wrappers return
+  `(i64 resultBits, i32 errorPtr)` to Wasmtime tuple delegates. A private native
+  stack slot adapts the C ABI; the host no longer pushes/maps/pops an error slot.
+  The dedicated packed `int -> int` path remains unchanged.
+* Scalar arities 2–4, including void results: bit-packed arguments cross in
+  registers with exact native signature validation, bypassing serialization.
+* Per-runtime scalar callback IDs: the guest resolves UTF-8 names once, then
+  dispatches by numeric ID. `DotNetIsolatorHost.Invoke<TArg, TResult>(name, arg)`
+  also avoids the params array and object-based scalar codec. Existing callback
+  overloads remain available.
+* Primitive collection arguments: `T[]` and `List<T>` support scalar, void and
+  primitive-array results without serialization. Lists are constructed with a
+  fresh backing array and live count. Null collections and list arguments to
+  interface parameters retain the managed fallback.
+* Managed batch dispatcher: one native `mono_runtime_invoke` per batch enters a
+  managed loop of cached strongly typed delegates. Instance delegate caches use
+  weak keys so they do not retain released guest objects.
+* Borrowed serialization buffers: host invocation arguments and guest generic
+  results use the writer's buffer plus logical length. Guest result buffers stay
+  leased and pinned until the host releases their handle, including when
+  deserialization throws. Reentrant calls get independent buffers. APIs that
+  require an owned `byte[]`, including generic callback envelopes, still copy.
+
+The following earlier paths were tested and kept:
 
 * Wasmtime module serialization: enabled by default through
   `IsolatedRuntimeHostOptions.UsePrecompiledModuleCache`. This skips repeated
@@ -225,8 +254,8 @@ The following paths were tested and kept:
   any blittable primitive element type sends the raw element bytes into a guest
   buffer once, and the guest materializes the managed array directly with
   `mono_array_new` plus a single `memcpy` instead of deserializing it through the
-  object-graph path. The return value still flows through the normal result
-  serialization, so any return type is supported; the host deserializes that
+  object-graph path. Scalar, void and primitive-array results now bypass result serialization;
+  other return types retain the normal result serializer, so any return type is supported; the host deserializes that
   result directly from guest memory and releases the guest handle even if
   deserialization fails. `byte[]` is included in this path. A `null` array falls
   back to the managed path so `null` is preserved. The native side validates
@@ -322,8 +351,8 @@ The following paths were tested and kept:
   and host-side marshaling across the batch, so it suits tight loops of
   independent primitive calls. A batched `int -> int` call measured about
   `97 ns` versus about `190 ns` for the same call made one at a time (about
-  `2x`); the remaining cost is the per-element guest `mono_runtime_invoke`, which
-  batching cannot remove.
+  `2x`); that initial implementation retained a per-element guest `mono_runtime_invoke`.
+  The managed batch dispatcher described above now removes that cost.
 
 ### Rejected
 

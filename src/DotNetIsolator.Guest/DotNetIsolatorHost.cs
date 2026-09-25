@@ -8,6 +8,17 @@ namespace DotNetIsolator;
 
 public static class DotNetIsolatorHost
 {
+    // Guest statics belong to this runtime and are reset when a pooled instance is restored.
+    private static readonly Dictionary<string, int> CallbackIds = new(StringComparer.Ordinal);
+
+    /// <summary>Invokes a callback without a params array for primitive arguments and results.</summary>
+    public static TRes Invoke<TArg, TRes>(string callbackName, TArg arg)
+    {
+        if (ScalarCodec<TArg>.Kind != 0 && ScalarCodec<TRes>.Kind != 0)
+            return ScalarCodec<TRes>.Unpack(CallScalar(callbackName, ScalarCodec<TArg>.Pack(arg), ScalarCodec<TArg>.Kind, ScalarCodec<TRes>.Kind));
+        return Invoke<TRes>(callbackName, new object[] { arg! });
+    }
+
     public static byte[] InvokeRaw(string callbackName, params byte[]?[] args)
         => InvokeRaw<object>(callbackName, args);
 
@@ -77,40 +88,39 @@ public static class DotNetIsolatorHost
             argBits = PrimitiveScalarCodec.Pack(args[0], argKind);
         }
 
-        var invocation = new ScalarCallInvocation
-        {
-            ArgBits = argBits,
-            ArgKind = argKind,
-            ResultKind = resultKind,
-        };
+        result = ScalarCodec<T>.Unpack(CallScalar(callbackName, argBits, argKind, resultKind));
+        return true;
+    }
 
-        var nameByteCount = Encoding.UTF8.GetByteCount(callbackName);
-        const int stackThreshold = 256;
-        var rented = nameByteCount > stackThreshold ? ArrayPool<byte>.Shared.Rent(nameByteCount) : null;
+    private static unsafe long CallScalar(string name, long bits, int argKind, int resultKind)
+    {
+        var invocation = new ScalarCallInvocation { ArgBits = bits, ArgKind = argKind, ResultKind = resultKind };
+        Interop.CallHostScalar(ResolveCallback(name), &invocation);
+        if (invocation.Error != 0)
+            throw new InvalidOperationException("Call to host failed: The call failed. See host console logs for details.");
+        return invocation.ResultBits;
+    }
+
+    private static unsafe int ResolveCallback(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        if (CallbackIds.TryGetValue(name, out var id)) return id;
+        var byteCount = Encoding.UTF8.GetByteCount(name);
+        var rented = byteCount > 256 ? ArrayPool<byte>.Shared.Rent(byteCount) : null;
         try
         {
-            Span<byte> nameBytes = rented is not null ? rented.AsSpan(0, nameByteCount) : stackalloc byte[nameByteCount];
-            Encoding.UTF8.GetBytes(callbackName, nameBytes);
-            fixed (byte* namePtr = nameBytes)
-            {
-                Interop.CallHostScalar(namePtr, nameByteCount, &invocation);
-            }
+            Span<byte> bytes = rented is null ? stackalloc byte[byteCount] : rented.AsSpan(0, byteCount);
+            Encoding.UTF8.GetBytes(name, bytes);
+            fixed (byte* ptr = bytes) id = Interop.ResolveCallback(ptr, byteCount);
         }
         finally
         {
-            if (rented is not null)
-            {
-                ArrayPool<byte>.Shared.Return(rented);
-            }
+            if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
         }
-
-        if (invocation.Error != 0)
-        {
+        if (id == 0)
             throw new InvalidOperationException("Call to host failed: The call failed. See host console logs for details.");
-        }
-
-        result = (T)PrimitiveScalarCodec.Unpack(invocation.ResultBits, resultKind);
-        return true;
+        CallbackIds.Add(name, id);
+        return id;
     }
 
     private static SerializedArgs SerializeArgs(object[] args)

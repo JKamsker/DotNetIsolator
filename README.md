@@ -170,6 +170,19 @@ using var host = new IsolatedRuntimeHost(new IsolatedRuntimeHostOptions
 
 The default pool reset mode restores only pages changed during runtime startup, which is fast but does not scrub every orphaned byte written by previous user code. Use it for trusted-code cleanup, not as a boundary against hostile guests that can perform raw or unsafe memory reads. `InstancePoolResetMode.FullSnapshotRestore` captures and restores every initialized snapshot page before reuse; it costs more memory and reset time, but closes that specific leftover-page gap for pooled instances. Instances that grow linear memory beyond the snapshot size are not pooled, and `MaxInstancePoolSize` bounds retained started instances after burst load.
 
+Primitive calls with up to four arguments use native scalar transport. Primitive
+array and `List<T>` arguments also bypass serialization for scalar, void and array
+results. For callbacks with one primitive argument and result, use the typed
+overload to avoid a params array:
+
+```cs
+var result = DotNetIsolatorHost.Invoke<int, int>("increment-callback", value);
+```
+
+For many independent primitive calls, reuse an `IsolatedMethod` and call
+`method.InvokeBatch<int, int>(target, values)`. The guest executes a cached typed
+delegate loop in one boundary crossing.
+
 See [docs/performance.md](docs/performance.md) for measured overhead and benchmark instructions.
 
 For workloads that create many short-lived runtimes, you can opt into Wasmtime's pooling allocator:
