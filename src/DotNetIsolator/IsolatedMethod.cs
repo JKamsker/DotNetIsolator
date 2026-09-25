@@ -85,10 +85,15 @@ public class IsolatedMethod
     private const int KindBoolean = 1, KindSByte = 2, KindByte = 3, KindInt16 = 4, KindUInt16 = 5, KindChar = 6,
         KindInt32 = 7, KindUInt32 = 8, KindInt64 = 9, KindUInt64 = 10, KindSingle = 11, KindDouble = 12;
 
-    // Routes primitive arrays and lists through bulk argument transport. Null collections retain
+    // Routes strings, primitive arrays and lists through bulk argument transport. Null collections retain
     // the managed fallback so their null value is preserved.
-    private bool TryInvokeBlittableArrayArg<T0, TRes>(IsolatedObject? instance, T0 param0, out TRes result, bool isVoid = false)
+    private bool TryInvokeBulkArg<T0, TRes>(IsolatedObject? instance, T0 param0, out TRes result, bool isVoid = false)
     {
+        if (typeof(T0) == typeof(string) && param0 is string text)
+        {
+            result = _runtimeInstance.InvokeStringArgMethod<TRes>(_monoMethodPtr, instance, text, out var supported, isVoid);
+            return supported;
+        }
         if ((typeof(T0) == typeof(int[]) || typeof(T0) == typeof(List<int>))) return TryArrayArg<int, TRes>(instance, param0, KindInt32, out result, isVoid);
         if ((typeof(T0) == typeof(uint[]) || typeof(T0) == typeof(List<uint>))) return TryArrayArg<uint, TRes>(instance, param0, KindUInt32, out result, isVoid);
         if ((typeof(T0) == typeof(long[]) || typeof(T0) == typeof(List<long>))) return TryArrayArg<long, TRes>(instance, param0, KindInt64, out result, isVoid);
@@ -209,9 +214,9 @@ public class IsolatedMethod
             return (TRes)(object)result;
         }
 
-        if (TryInvokeBlittableArrayArg<T0, TRes>(instance, param0, out var arrayArgResult))
+        if (TryInvokeBulkArg<T0, TRes>(instance, param0, out var bulkArgResult))
         {
-            return arrayArgResult;
+            return bulkArgResult;
         }
 
         // Any primitive (T0) -> TRes call (int -> int uses the dedicated packed path above).
@@ -335,7 +340,7 @@ public class IsolatedMethod
             return;
         }
 
-        if (TryInvokeBlittableArrayArg<T0, object>(instance, param0, out _, isVoid: true)) return;
+        if (TryInvokeBulkArg<T0, object>(instance, param0, out _, isVoid: true)) return;
 
         Invoke<T0, object>(instance, param0);
     }
@@ -391,6 +396,18 @@ public class IsolatedMethod
         }
 
         return _runtimeInstance.InvokeScalarBatch<T0, TRes>(_monoMethodPtr, instance, args, argKind, resultKind);
+    }
+
+    /// <summary>Writes a primitive batch into caller-owned storage. The destination is unchanged if invocation fails.</summary>
+    public void InvokeBatch<T0, TRes>(IsolatedObject? instance, ReadOnlySpan<T0> args, Span<TRes> destination)
+        where T0 : unmanaged
+        where TRes : unmanaged
+    {
+        var argKind = PrimitiveScalarCodec.GetKind(typeof(T0));
+        var resultKind = PrimitiveScalarCodec.GetKind(typeof(TRes));
+        if (argKind == PrimitiveScalarCodec.None || resultKind == PrimitiveScalarCodec.None)
+            throw new ArgumentException("InvokeBatch requires blittable primitive argument and result types.");
+        _runtimeInstance.InvokeScalarBatchInto(_monoMethodPtr, instance, args, destination, argKind, resultKind);
     }
 
     internal IsolatedRuntime Runtime => _runtimeInstance;

@@ -220,7 +220,7 @@ internal static class ObjectGraphSerializer
         return ObjectGraphObjectSerializer.Read(reader, type, depth);
     }
 
-    private static void EnsureDepth(int depth)
+    internal static void EnsureDepth(int depth)
     {
         if (depth > MaxDepth)
         {

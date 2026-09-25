@@ -1,0 +1,4 @@
+.NET 10.0.11; Ubuntu 24.04.3 LTS; X64
+int control: median 287.5 ns/op; range 282.0–377.9; 0.0 host B/op
+batch 1024 per element: median 50.3 ns/op; range 50.2–50.7; 4.0 host B/op
+Sink: 856440000

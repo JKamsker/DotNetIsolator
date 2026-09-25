@@ -76,7 +76,7 @@ internal static class FastPathBenchmarks
         Console.WriteLine($"Sink: {MeasurementSink.Value}");
     }
 
-    private static void Measure(string name, int iterations, Func<long> call, int operations = 1)
+    internal static void Measure(string name, int iterations, Func<long> call, int operations = 1)
     {
         long sum = 0;
         for (var i = 0; i < Math.Min(iterations, 2000); i++) sum += call();

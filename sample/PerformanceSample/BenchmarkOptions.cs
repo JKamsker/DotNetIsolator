@@ -24,6 +24,9 @@ internal sealed record BenchmarkOptions(
           dotnet run -c Release --project sample\PerformanceSample\PerformanceSample.csproj -- [options]
 
         Options:
+          --iteration-paths         Callback, batch and collection comparison workloads.
+          --iteration-batch         Focused control and batch loop measurements.
+          --iteration-typed         Typed callback overloads for arities 2–4.
           --callback-paths          Longer samples focused on scalar and raw callbacks.
           --fast-paths              Fixed warm fast-path suite (five samples, host allocations).
           --host-iterations <n>      Direct host calls to measure. Default: 10000000.

@@ -2,6 +2,7 @@ using DotNetIsolator.Guest;
 using MessagePack;
 using System.Buffers;
 using System.Text;
+using System.Runtime.InteropServices;
 using DotNetIsolator.Internal;
 
 namespace DotNetIsolator;
@@ -9,6 +10,8 @@ namespace DotNetIsolator;
 public static class DotNetIsolatorHost
 {
     // Guest statics belong to this runtime and are reset when a pooled instance is restored.
+    [ThreadStatic] private static ArrayBufferWriter<byte>? _availableEnvelopeWriter;
+
     private static readonly Dictionary<string, int> CallbackIds = new(StringComparer.Ordinal);
 
     /// <summary>Invokes a callback without a params array for primitive arguments and results.</summary>
@@ -19,11 +22,36 @@ public static class DotNetIsolatorHost
         return Invoke<TRes>(callbackName, new object[] { arg! });
     }
 
+    /// <summary>Invokes a callback without a params array for primitive arguments and results.</summary>
+    public static TRes Invoke<T0, T1, TRes>(string callbackName, T0 arg0, T1 arg1)
+    {
+        if (ScalarCodec<T0>.Kind != 0 && ScalarCodec<T1>.Kind != 0 && ScalarCodec<TRes>.Kind != 0)
+            return ScalarCodec<TRes>.Unpack(CallScalars(callbackName, (ScalarCodec<T0>.Kind << 0) | (ScalarCodec<T1>.Kind << 4) | (ScalarCodec<TRes>.Kind << 16) | (2 << 20), ScalarCodec<T0>.Pack(arg0), ScalarCodec<T1>.Pack(arg1)));
+        return Invoke<TRes>(callbackName, new object[] { arg0!, arg1! });
+    }
+
+    /// <summary>Invokes a callback without a params array for primitive arguments and results.</summary>
+    public static TRes Invoke<T0, T1, T2, TRes>(string callbackName, T0 arg0, T1 arg1, T2 arg2)
+    {
+        if (ScalarCodec<T0>.Kind != 0 && ScalarCodec<T1>.Kind != 0 && ScalarCodec<T2>.Kind != 0 && ScalarCodec<TRes>.Kind != 0)
+            return ScalarCodec<TRes>.Unpack(CallScalars(callbackName, (ScalarCodec<T0>.Kind << 0) | (ScalarCodec<T1>.Kind << 4) | (ScalarCodec<T2>.Kind << 8) | (ScalarCodec<TRes>.Kind << 16) | (3 << 20), ScalarCodec<T0>.Pack(arg0), ScalarCodec<T1>.Pack(arg1), ScalarCodec<T2>.Pack(arg2)));
+        return Invoke<TRes>(callbackName, new object[] { arg0!, arg1!, arg2! });
+    }
+
+    /// <summary>Invokes a callback without a params array for primitive arguments and results.</summary>
+    public static TRes Invoke<T0, T1, T2, T3, TRes>(string callbackName, T0 arg0, T1 arg1, T2 arg2, T3 arg3)
+    {
+        if (ScalarCodec<T0>.Kind != 0 && ScalarCodec<T1>.Kind != 0 && ScalarCodec<T2>.Kind != 0 && ScalarCodec<T3>.Kind != 0 && ScalarCodec<TRes>.Kind != 0)
+            return ScalarCodec<TRes>.Unpack(CallScalars(callbackName, (ScalarCodec<T0>.Kind << 0) | (ScalarCodec<T1>.Kind << 4) | (ScalarCodec<T2>.Kind << 8) | (ScalarCodec<T3>.Kind << 12) | (ScalarCodec<TRes>.Kind << 16) | (4 << 20), ScalarCodec<T0>.Pack(arg0), ScalarCodec<T1>.Pack(arg1), ScalarCodec<T2>.Pack(arg2), ScalarCodec<T3>.Pack(arg3)));
+        return Invoke<TRes>(callbackName, new object[] { arg0!, arg1!, arg2!, arg3! });
+    }
+
     public static byte[] InvokeRaw(string callbackName, params byte[]?[] args)
         => InvokeRaw<object>(callbackName, args);
 
     public static void Invoke(string callbackName, params object[] args)
     {
+        if (TryInvokeScalars(callbackName, args, 0, out _)) return;
         using var serializedArgs = SerializeArgs(args);
         _ = PerformCall<object>(
             CreateCall(callbackName, serializedArgs.Args, serializedArgs.Length, isRawCall: false),
@@ -33,7 +61,7 @@ public static class DotNetIsolatorHost
     public static unsafe byte[] InvokeRaw<T>(string callbackName, params byte[]?[] args)
     {
         ArgumentNullException.ThrowIfNull(args);
-        var success = Interop.CallHostRaw(ResolveCallback(callbackName, raw: true), args, out var resultPtr, out var resultLength);
+        var success = Interop.CallHostRaw(ResolveCallback(callbackName, includeName: true), args, out var resultPtr, out var resultLength);
         try
         {
             if (!success)
@@ -67,6 +95,11 @@ public static class DotNetIsolatorHost
     private static unsafe bool TryInvokeScalar<T>(string callbackName, object[] args, out T result)
     {
         var resultKind = PrimitiveScalarCodec.GetKind(typeof(T));
+        if (args.Length is >= 2 and <= 4 && resultKind != 0 && TryInvokeScalars(callbackName, args, resultKind, out var manyBits))
+        {
+            result = ScalarCodec<T>.Unpack(manyBits);
+            return true;
+        }
         if (resultKind == PrimitiveScalarCodec.None || args.Length > 1)
         {
             result = default!;
@@ -97,6 +130,42 @@ public static class DotNetIsolatorHost
         return true;
     }
 
+    private static unsafe bool TryInvokeScalars(string name, object[] args, int resultKind, out long result)
+    {
+        result = 0;
+        if (args.Length > 4) return false;
+        var kinds = (resultKind << 16) | (args.Length << 20);
+        long* bits = stackalloc long[4];
+        for (var i = 0; i < 4; i++) bits[i] = 0;
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i] is null) return false;
+            var kind = PrimitiveScalarCodec.GetKind(args[i].GetType());
+            if (kind == 0) return false;
+            kinds |= kind << (i * 4);
+            bits[i] = PrimitiveScalarCodec.Pack(args[i], kind);
+        }
+        result = CallScalars(name, kinds, bits[0], bits[1], bits[2], bits[3]);
+        return true;
+    }
+
+    // Four bits per argument kind, then result kind at bit 16 and arity at bit 20.
+    private static unsafe long CallScalars(string name, int kinds, long a0 = 0, long a1 = 0, long a2 = 0, long a3 = 0)
+    {
+        var invocation = new ScalarArguments { A0 = a0, A1 = a1, A2 = a2, A3 = a3 };
+        Interop.CallHostScalars(ResolveCallback(name, includeName: true), kinds, &invocation);
+        if (invocation.Error != 0)
+            throw new InvalidOperationException("Call to host failed: The call failed. See host console logs for details.");
+        return invocation.Result;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ScalarArguments
+    {
+        public long A0, A1, A2, A3, Result;
+        public int Error;
+    }
+
     private static unsafe long CallScalar(string name, long bits, int argKind, int resultKind)
     {
         var result = Interop.CallHostScalar(ResolveCallback(name), argKind | (resultKind << 8), out var error, bits);
@@ -105,7 +174,7 @@ public static class DotNetIsolatorHost
         return result;
     }
 
-    private static unsafe int ResolveCallback(string name, bool raw = false)
+    private static unsafe int ResolveCallback(string name, bool includeName = false)
     {
         ArgumentNullException.ThrowIfNull(name);
         if (CallbackIds.TryGetValue(name, out var id)) return id;
@@ -122,7 +191,7 @@ public static class DotNetIsolatorHost
             if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
         }
         if (id == 0)
-            throw new InvalidOperationException(raw
+            throw new InvalidOperationException(includeName
                 ? $"Call to host failed: There is no registered callback with name '{name}'"
                 : "Call to host failed: The call failed. See host console logs for details.");
         CallbackIds.Add(name, id);
@@ -165,42 +234,57 @@ public static class DotNetIsolatorHost
 
     private static unsafe T PerformCall<T>(GuestToHostCall callInfo, bool readResult = true)
     {
-        var callInfoBytes = MessagePackSerializer.Serialize(callInfo, MessagePackCompatibility.GuestToHostCallOptions);
-
-        fixed (void* callInfoPtr = callInfoBytes)
+        // Keep the writer unavailable until the synchronous call finishes, including reentry.
+        var writer = _availableEnvelopeWriter ?? new ArrayBufferWriter<byte>();
+        _availableEnvelopeWriter = null;
+        writer.ResetWrittenCount();
+        try
         {
-            var success = Interop.CallHost(callInfoPtr, callInfoBytes.Length, out var resultPtr, out var resultLength);
-            try
+            MessagePackSerializer.Serialize(writer, callInfo, MessagePackCompatibility.GuestToHostCallOptions);
+            fixed (void* callInfoPtr = writer.WrittenSpan)
             {
-                var hasResult = (int)resultPtr != 0 && (callInfo.IsRawCall || resultLength > 0);
-                var result = hasResult ? new Span<byte>(resultPtr, resultLength) : default;
-                if (success)
-                {
-                    if (!readResult || !hasResult)
-                    {
-                        return default!;
-                    }
-
-                    if (callInfo.IsRawCall)
-                    {
-                        return (T)(object)result.ToArray();
-                    }
-
-                    using var resultStream = new UnmanagedMemoryStream((byte*)resultPtr, resultLength);
-                    return MessagePackCompatibility.DeserializeObject<T>(resultStream)!;
-                }
-                else
-                {
-                    var errorString = Encoding.UTF8.GetString(result);
-                    throw new InvalidOperationException($"Call to host failed: {errorString}");
-                }
+                return ReadHostCallResult<T>(callInfo, readResult, callInfoPtr, writer.WrittenCount);
             }
-            finally
+        }
+        finally
+        {
+            _availableEnvelopeWriter ??= writer;
+        }
+    }
+
+    private static unsafe T ReadHostCallResult<T>(GuestToHostCall callInfo, bool readResult, void* callInfoPtr, int callInfoLength)
+    {
+        var success = Interop.CallHost(callInfoPtr, callInfoLength, out var resultPtr, out var resultLength);
+        try
+        {
+            var hasResult = (int)resultPtr != 0 && (callInfo.IsRawCall || resultLength > 0);
+            var result = hasResult ? new Span<byte>(resultPtr, resultLength) : default;
+            if (success)
             {
-                if (resultPtr is not null)
+                if (!readResult || !hasResult)
                 {
-                    Interop.FreeHostCallResult(resultPtr);
+                    return default!;
                 }
+
+                if (callInfo.IsRawCall)
+                {
+                    return (T)(object)result.ToArray();
+                }
+
+                using var resultStream = new UnmanagedMemoryStream((byte*)resultPtr, resultLength);
+                return MessagePackCompatibility.DeserializeObject<T>(resultStream)!;
+            }
+            else
+            {
+                var errorString = Encoding.UTF8.GetString(result);
+                throw new InvalidOperationException($"Call to host failed: {errorString}");
+            }
+        }
+        finally
+        {
+            if (resultPtr is not null)
+            {
+                Interop.FreeHostCallResult(resultPtr);
             }
         }
     }

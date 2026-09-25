@@ -1,0 +1,18 @@
+.NET 10.0.11; Ubuntu 24.04.3 LTS; X64
+int control: median 272.7 ns/op; range 268.8–280.9; 0.0 host B/op
+callback arity 2: median 22743.0 ns/op; range 22553.1–24405.8; 592.0 host B/op
+callback arity 3: median 26713.3 ns/op; range 26648.8–27492.9; 808.0 host B/op
+callback arity 4: median 30862.2 ns/op; range 29528.8–31853.7; 992.0 host B/op
+callback void: median 13241.8 ns/op; range 13079.1–13969.5; 312.0 host B/op
+batch 1024 per element: median 40.7 ns/op; range 39.6–42.4; 4.0 host B/op
+nested DTO callback (32 KiB): median 440182.4 ns/op; range 439703.2–449916.6; 101916.7 host B/op
+List<string>[256] roundtrip: median 985586.5 ns/op; range 970926.0–1005245.0; 16680.0 host B/op
+Dictionary<string,int>[256] roundtrip: median 1897816.0 ns/op; range 1872742.5–1909010.0; 56268.7 host B/op
+string return (32 chars): median 4684.3 ns/op; range 4652.5–5704.3; 232.0 host B/op
+string return (32 KiB UTF-8): median 362325.5 ns/op; range 357837.1–362985.9; 72824.0 host B/op
+string[32] -> string: median 26369.5 ns/op; range 25981.7–28711.6; 1216.0 host B/op
+string[32] -> int: median 23946.0 ns/op; range 23849.7–24395.7; 1152.0 host B/op
+string[32] -> void: median 14957.6 ns/op; range 14894.6–15040.2; 984.0 host B/op
+List<string>[8] roundtrip: median 97371.8 ns/op; range 96145.9–105925.9; 2672.4 host B/op
+Dictionary<string,int>[8] roundtrip: median 135392.4 ns/op; range 135157.1–136507.9; 5184.5 host B/op
+Sink: 96000

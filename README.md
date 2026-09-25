@@ -172,16 +172,28 @@ The default pool reset mode restores only pages changed during runtime startup, 
 
 Primitive calls with up to four arguments use native scalar transport. Primitive
 array and `List<T>` arguments also bypass serialization for scalar, void and array
-results. For callbacks with one primitive argument and result, use the typed
-overload to avoid a params array:
+results. Single non-null string arguments use bulk UTF-8 transport, and string
+results use native encoding. For callbacks with one to four primitive arguments
+and a primitive result, use typed overloads to avoid a params array:
 
 ```cs
 var result = DotNetIsolatorHost.Invoke<int, int>("increment-callback", value);
+var sum = DotNetIsolatorHost.Invoke<int, int, int>("addTwoNumbers", 123, 456);
 ```
 
 For many independent primitive calls, reuse an `IsolatedMethod` and call
 `method.InvokeBatch<int, int>(target, values)`. The guest executes a cached typed
-delegate loop in one boundary crossing.
+delegate loop in one boundary crossing. Supply a destination span to reuse host
+result storage:
+
+```cs
+method.InvokeBatch<int, int>(target, values, destination);
+```
+
+The destination must have at least as many elements as the input. Only that
+prefix is written, after the whole batch succeeds; overlapping input/output is
+supported. If a guest call throws, the destination is unchanged, while guest
+side effects from earlier elements remain.
 
 See [docs/performance.md](docs/performance.md) for measured overhead and benchmark instructions.
 
@@ -320,7 +332,7 @@ var sum = DotNetIsolatorHost.Invoke<int>("addTwoNumbers", 123, 456);
 var hostTime = DotNetIsolatorHost.Invoke<DateTime>("getHostTime");
 ```
 
-For one primitive argument and result, `DotNetIsolatorHost.Invoke<TArg, TResult>(name, arg)` avoids the params array and passes scalar values directly through the Wasm import. Successful callback-name lookups are cached as numeric IDs.
+Typed overloads support one to four primitive arguments and a primitive result, for example `DotNetIsolatorHost.Invoke<int, int, int>("addTwoNumbers", 123, 456)`. They avoid the params array and pass scalar values directly through the Wasm import. The existing params overload also uses scalar transport for up to four primitive arguments, including void/discarded results. Successful callback-name lookups are cached as numeric IDs. Other signatures retain serialization.
 
 For byte-array arguments and results, `DotNetIsolatorHost.InvokeRaw(name, bytes)` uses direct bulk transport without a serialization envelope. The host receives its own argument arrays, and the guest receives its own result array, so either side can retain or modify its copy independently. Null and empty arrays remain distinct.
 

@@ -62,7 +62,7 @@ typedef struct BlittableArgInvocation {
 	void* result_serialized;
 	int result_serialized_length;
 	MonoGCHandle result_serialized_handle;
-	int argument_is_list;
+	int argument_shape; // 0 array, 1 list, 2 UTF-8 string
 	int result_kind;
 	int result_element_kind;
 	int reserved;
@@ -581,11 +581,35 @@ static int collect_simple_members(MonoClass* klass, SimpleMember* members) {
 	return count;
 }
 
+// Uses the same UTF-8 / 7-bit length format as BinaryWriter, including surrogate replacement.
+static int try_native_serialize_string(MonoString* value, void** out_data, int* out_length, MonoGCHandle* out_handle) {
+    int chars_length = mono_string_length(value);
+    if (chars_length > (INT32_MAX - 6) / 3) return 0;
+    uint32_t source_handle = mono_gchandle_new((MonoObject*)value, 1);
+    const uint16_t* chars = (const uint16_t*)mono_string_chars(value);
+    int utf8_length = utf16_to_utf8_length(chars, chars_length);
+    int total = 1 + sizeof_7bit_length((uint32_t)utf8_length) + utf8_length;
+    MonoArray* array = mono_array_new(mono_domain_get(), mono_get_byte_class(), total);
+    if (!array) { mono_gchandle_free(source_handle); return 0; }
+    MonoGCHandle handle = (MonoGCHandle)mono_gchandle_new((MonoObject*)array, 1);
+    char* buffer = mono_array_addr_with_size(array, 1, 0);
+    buffer[0] = 1;
+    int offset = 1 + write_7bit_length(buffer + 1, (uint32_t)utf8_length);
+    utf16_to_utf8_write(chars, chars_length, buffer + offset);
+    mono_gchandle_free(source_handle);
+    *out_handle = handle;
+    *out_data = buffer;
+    *out_length = total;
+    return 1;
+}
+
 // Serializes a plain object whose members are non-char primitives and/or strings directly into a
 // managed byte[] matching the object-graph positional format, returning 1 on success or 0 to fall
 // back to the managed serializer.
 static int try_native_serialize_object(MonoObject* value, void** out_data, int* out_length, MonoGCHandle* out_handle) {
 	MonoClass* klass = mono_object_get_class(value);
+    if (klass == mono_get_string_class())
+        return try_native_serialize_string((MonoString*)value, out_data, out_length, out_handle);
 	if (mono_class_is_enum(klass)) {
 		return 0;
 	}
@@ -1087,7 +1111,7 @@ void dotnetisolator_invoke_blittable_list(BlittableArrayInvocationResult* result
 	invoke_blittable_list(target, method_ptr, result);
 }
 
-// Bulk argument path for T[] and List<T>. Scalar, void and primitive-array results bypass
+// Bulk argument path for T[], List<T> and UTF-8 strings. Scalar, void and primitive-array results bypass
 // serialization; other result shapes keep the object-graph fallback.
 __attribute__((export_name("dotnetisolator_invoke_blittable_array_arg")))
 void dotnetisolator_invoke_blittable_array_arg(BlittableArgInvocation* invocation) {
@@ -1131,7 +1155,18 @@ void dotnetisolator_invoke_blittable_array_arg(BlittableArgInvocation* invocatio
 	MonoClassField* items_field = NULL;
 	MonoClassField* size_field = NULL;
 	int valid = parameter && !mono_type_is_byref(parameter);
-	if (valid && invocation->argument_is_list) {
+    if (invocation->argument_shape == 2) {
+        int is_string = valid && mono_type_get_type(parameter) == MONO_TYPE_STRING;
+        if (valid && !is_string && mono_class_is_assignable_from(mono_class_from_mono_type(parameter), mono_get_string_class())) {
+            invocation->result_kind = -3; // Preserve object/interface parameter calls through serialization.
+            return;
+        }
+        valid = is_string && invocation->arg_element_kind == 3;
+        if (valid && method_return_type_is_task_like(invocation->method_ptr)) {
+            invocation->result_kind = -3; // The general dispatcher installs/pumps the async context.
+            return;
+        }
+    } else if (valid && invocation->argument_shape == 1) {
 		list_class = mono_class_from_mono_type(parameter);
 		valid = !strcmp(mono_class_get_name(list_class), "List`1")
 			&& !strcmp(mono_class_get_namespace(list_class), "System.Collections.Generic")
@@ -1171,20 +1206,24 @@ void dotnetisolator_invoke_blittable_array_arg(BlittableArgInvocation* invocatio
 		return;
 	}
 
-	MonoArray* array = mono_array_new(mono_domain_get(), element_class, (uintptr_t)invocation->arg_length);
-	if (invocation->arg_length > 0) {
-		void* dest = mono_array_addr_with_size(array, invocation->arg_element_size, 0);
-		memcpy(dest, invocation->arg_data, (size_t)invocation->arg_length * (size_t)invocation->arg_element_size);
-	}
-
-	// Pin the array so it does not move while the invoked method runs.
-	MonoGCHandle array_handle = (MonoGCHandle)mono_gchandle_new((MonoObject*)array, /* pinned */ 1);
-
-	MonoObject* exc = NULL;
-	MonoObject* target = invocation->target ? mono_gchandle_get_target((uint32_t)invocation->target) : 0;
-	MonoObject* argument = (MonoObject*)array;
+    MonoArray* array = NULL;
+    MonoObject* argument;
+    if (invocation->argument_shape == 2) {
+        argument = (MonoObject*)mono_string_new_len(mono_domain_get(), invocation->arg_data ? invocation->arg_data : "", invocation->arg_length);
+    } else {
+        array = mono_array_new(mono_domain_get(), element_class, (uintptr_t)invocation->arg_length);
+        if (invocation->arg_length > 0) {
+            void* dest = mono_array_addr_with_size(array, invocation->arg_element_size, 0);
+            memcpy(dest, invocation->arg_data, (size_t)invocation->arg_length * (size_t)invocation->arg_element_size);
+        }
+        argument = (MonoObject*)array;
+    }
+    // Keep the newly constructed argument stable through nested guest calls and result serialization.
+    MonoGCHandle argument_handle = (MonoGCHandle)mono_gchandle_new(argument, 1);
+    MonoObject* exc = NULL;
+    MonoObject* target = invocation->target ? mono_gchandle_get_target((uint32_t)invocation->target) : 0;
 	MonoGCHandle list_handle = NULL;
-	if (invocation->argument_is_list) {
+	if (invocation->argument_shape == 1) {
 		argument = mono_object_new(mono_domain_get(), list_class);
 		list_handle = (MonoGCHandle)mono_gchandle_new(argument, 1);
 		// A new List<T> has zero version; install the fresh backing array with the GC write barrier.
@@ -1215,7 +1254,7 @@ void dotnetisolator_invoke_blittable_array_arg(BlittableArgInvocation* invocatio
 	}
 
 	if (list_handle) mono_gchandle_free((uint32_t)list_handle);
-	mono_gchandle_free((uint32_t)array_handle);
+	mono_gchandle_free((uint32_t)argument_handle);
 
 	if (exc) {
 		MonoObject* ignored_tostring_exception;

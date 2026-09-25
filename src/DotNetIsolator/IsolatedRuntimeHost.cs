@@ -386,6 +386,7 @@ public class IsolatedRuntimeHost : IDisposable
         Linker.DefineFunction("dotnetisolator", "request_assembly", (CallerFunc<int, int, int, int, int>)HandleRequestAssembly);
         Linker.DefineFunction("dotnetisolator", "call_host", (CallerFunc<int, int, int, int, int>)HandleCallHost);
         Linker.DefineFunction("dotnetisolator", "resolve_callback", (CallerFunc<int, int, int>)HandleResolveCallback);
+        Linker.DefineFunction("dotnetisolator", "call_host_scalars", (CallerFunc<int, int, long, long, long, long, int, long>)HandleCallHostScalars);
         Linker.DefineFunction("dotnetisolator", "call_host_raw", (CallerFunc<int, int, int, int, int, int>)HandleCallHostRaw);
         Linker.DefineFunction("dotnetisolator", "call_host_scalar", (CallerFunc<int, long, int, int, long>)HandleCallHostScalar);
     }
@@ -419,6 +420,21 @@ public class IsolatedRuntimeHost : IDisposable
         }
     }
 
+    private long HandleCallHostScalars(Caller caller, int callbackId, int kinds, long a0, long a1, long a2, long a3, int errorPtr)
+    {
+        try
+        {
+            return IsolatedRuntime.FromStore(caller.Store).InvokeMultiScalarCallback(callbackId, kinds, a0, a1, a2, a3);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex.ToString());
+            var memory = caller.GetMemory("memory") ?? throw new InvalidOperationException("Caller lacks memory");
+            memory.WriteInt32(errorPtr, 1);
+            return 0;
+        }
+    }
+
     private int HandleCallHostRaw(Caller caller, int callbackId, int argsPtr, int count, int resultPtr, int resultLengthPtr)
         => IsolatedRuntime.FromStore(caller.Store).AcceptRawCallFromGuest(callbackId, argsPtr, count, resultPtr, resultLengthPtr);
 
@@ -432,7 +448,7 @@ public class IsolatedRuntimeHost : IDisposable
             var assemblyBytes = loader(assemblyName);
             if (assemblyBytes is not null)
             {
-                // No need to free this memory after as it's held permanently to represent the assembly
+                // The native search hook copies these bytes into a Mono image, then frees this transfer buffer.
                 var malloc = caller.GetFunction("malloc") ?? throw new InvalidOperationException("Caller lacks required export 'malloc'");
                 var copiedAssemblyBytesPtr = CopyValue(
                     malloc.WrapFunc<int, int>()!,

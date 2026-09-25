@@ -10,6 +10,12 @@ internal static class Program
         CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
         CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
 
+        if (args.Contains("--iteration-paths") || args.Contains("--iteration-typed") || args.Contains("--iteration-batch"))
+        {
+            IterationBenchmarks.Run(typedOnly: args.Contains("--iteration-typed"), batchOnly: args.Contains("--iteration-batch"));
+            return 0;
+        }
+
         if (args.Contains("--fast-paths") || args.Contains("--callback-paths"))
         {
             FastPathBenchmarks.Run(callbacksOnly: args.Contains("--callback-paths"));

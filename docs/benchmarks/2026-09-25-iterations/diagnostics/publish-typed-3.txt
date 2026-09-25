@@ -1,0 +1,6 @@
+.NET 10.0.11; Ubuntu 24.04.3 LTS; X64
+int control: median 277.3 ns/op; range 275.1–282.9; 0.0 host B/op
+typed callback arity 2: median 1006.0 ns/op; range 993.7–1031.1; 0.0 host B/op
+typed callback arity 3: median 1090.8 ns/op; range 1068.5–1550.2; 0.0 host B/op
+typed callback arity 4: median 1099.4 ns/op; range 1090.8–1114.7; 0.0 host B/op
+Sink: 9538000

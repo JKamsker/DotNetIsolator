@@ -120,6 +120,25 @@ public sealed class BenchmarkTarget
     public int CallSmallRawCallback() => DotNetIsolatorHost.InvokeRaw("raw-buffer-callback", _smallBuffer).Length;
     public double CallDoubleCallback(double value) => DotNetIsolatorHost.Invoke<double, double>("double-callback", value);
 
+    private readonly NestedPayload _nestedCallbackPayload = new() { Values = new double[4096], Items = Enumerable.Range(0, 8).Select(x => new BenchmarkPayload { Id = x, Name = "nested" }).ToList() };
+    public int CallbackNested() => DotNetIsolatorHost.Invoke<NestedPayload>("nested", _nestedCallbackPayload).Values.Length;
+
+    public int TypedCallback2(int value) => DotNetIsolatorHost.Invoke<int, int, int>("add2", value, 3);
+    public double TypedCallback3(int value) => DotNetIsolatorHost.Invoke<int, double, long, double>("add3", value, 3.5, 4L);
+    public long TypedCallback4(int value) => DotNetIsolatorHost.Invoke<int, long, short, byte, long>("add4", value, 3L, (short)4, (byte)5);
+    private readonly string _longText = new('λ', 16384);
+    public string EchoText(string value) => value;
+    public int TextLength(string value) => value.Length;
+    public void ConsumeText(string value) => _consumedValue = value.Length;
+    public string ReturnShortString() => "abcdefghijklmnopqrstuvwxyz012345";
+    public string ReturnLongString() => _longText;
+    public int Callback2(int value) => DotNetIsolatorHost.Invoke<int>("add2", value, 3);
+    public double Callback3(int value) => DotNetIsolatorHost.Invoke<double>("add3", value, 3.5, 4L);
+    public long Callback4(int value) => DotNetIsolatorHost.Invoke<long>("add4", value, 3L, (short)4, (byte)5);
+    public int CallbackVoid(int value) { DotNetIsolatorHost.Invoke("consume", value); return value; }
+    public List<string> EchoStrings(List<string> values) => values;
+    public Dictionary<string, int> EchoDictionary(Dictionary<string, int> values) => values;
+
     public int Add2(int a, int b) => a + b;
     public double Add3(int a, double b, long c) => a + b + c;
     public long Add4(int a, long b, short c, byte d) => a + b + c + d;

@@ -1,0 +1,17 @@
+Host bytes/call: 2672.252
+System.IO.FileInfo size=192: 143
+System.String size=200: 77
+System.String size=40: 61
+System.String size=80: 59
+System.String size=128: 46
+System.String size=72: 23
+System.String[] size=88: 18
+System.IO.UnmanagedMemoryStream size=88: 16
+System.IO.BinaryReader size=56: 13
+System.String[] size=56: 11
+BufferLease size=40: 10
+System.Collections.Generic.List`1[System.String] size=32: 9
+Enumerator[System.String] size=40: 6
+System.Type[] size=32: 6
+System.RuntimeType[] size=32: 4
+System.Object[] size=96: 2

@@ -4,6 +4,7 @@
 #include <wasm/driver.h>
 #include <mono/metadata/object.h>
 #include <limits.h>
+#include <stddef.h>
 
 __attribute__((import_module("dotnetisolator")))
 __attribute__((import_name("call_host")))
@@ -17,6 +18,23 @@ int64_t dotnetisolator_call_host_scalar(int callback_id, int64_t bits, int kinds
 static int64_t call_host_scalar(int callback_id, int kinds, int* error, int64_t bits) {
 	*error = 0;
 	return dotnetisolator_call_host_scalar(callback_id, bits, kinds, error);
+}
+
+// The internal call uses the existing (i32, i32, i32) -> void interpreter wrapper.
+// The native adapter passes scalar bits through Wasm registers, with only an error pointer.
+typedef struct ScalarArguments {
+    int64_t a0, a1, a2, a3, result;
+    int error;
+} ScalarArguments;
+_Static_assert(offsetof(ScalarArguments, error) == 40, "Scalar callback layout must match the guest.");
+
+__attribute__((import_module("dotnetisolator")))
+__attribute__((import_name("call_host_scalars")))
+int64_t dotnetisolator_call_host_scalars(int callback_id, int kinds, int64_t a0, int64_t a1, int64_t a2, int64_t a3, int* error);
+
+static void call_host_scalars(int callback_id, int kinds, ScalarArguments* args) {
+    args->error = 0;
+    args->result = dotnetisolator_call_host_scalars(callback_id, kinds, args->a0, args->a1, args->a2, args->a3, &args->error);
 }
 
 __attribute__((import_module("dotnetisolator")))
@@ -69,6 +87,7 @@ void dotnetisolator_free_host_call_result(void* result) {
 }
 
 void dotnetisolator_add_host_callback_internal_calls() {
+	mono_add_internal_call("DotNetIsolator.Guest.Interop::CallHostScalars", call_host_scalars);
 	mono_add_internal_call("DotNetIsolator.Guest.Interop::CallHostRaw", call_host_raw);
 	mono_add_internal_call("DotNetIsolator.Guest.Interop::CallHost", dotnetisolator_call_host);
 	mono_add_internal_call("DotNetIsolator.Guest.Interop::ResolveCallback", dotnetisolator_resolve_callback);

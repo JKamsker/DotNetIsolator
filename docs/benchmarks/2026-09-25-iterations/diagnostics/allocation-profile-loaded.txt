@@ -1,0 +1,21 @@
+Host bytes/call: 664.0332
+Assembly request System.Runtime: 2
+Assembly request System.Collections: 2
+Assembly request System.Text.RegularExpressions: 2
+Assembly request System.Linq: 2
+Assembly request System.Memory: 2
+Assembly request System.Text.Encoding.Extensions: 2
+Assembly request System.Collections.Concurrent: 2
+Assembly request System.Runtime.InteropServices: 2
+Assembly request System.Numerics.Vectors: 2
+Assembly request DotNetIsolator.WasmApp: 1
+Assembly request MessagePack: 1
+Assembly request PerformanceSample: 1
+System.String size=40: 61
+System.IO.UnmanagedMemoryStream size=88: 17
+System.String[] size=88: 14
+System.IO.BinaryReader size=56: 10
+Enumerator[System.String] size=40: 8
+System.Collections.Generic.List`1[System.String] size=32: 8
+BufferLease size=40: 6
+System.Object[] size=56: 1

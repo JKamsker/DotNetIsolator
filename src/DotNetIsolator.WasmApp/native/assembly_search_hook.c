@@ -1,5 +1,8 @@
 #include <wasm/driver.h>
 #include <mono/metadata/class.h>
+#include <mono/metadata/assembly.h>
+#include <mono/metadata/image.h>
+#include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 
@@ -15,6 +18,13 @@ MonoAssembly* dotnetisolator_assembly_search_hook(MonoAssemblyName* aname, void*
 	MonoAssembly* result = NULL;
 
 	if (!assembly_search_hook_in_progress && !getenv("DISABLE_ASSEMBLY_SEARCH_HOOK")) {
+        // This API invokes the search hooks too. Suppress ours while Mono's remaining hooks
+        // check the default load context, which is also where we load supplied images below.
+        assembly_search_hook_in_progress = 1;
+        result = mono_assembly_loaded(aname);
+        assembly_search_hook_in_progress = 0;
+        if (result) return result;
+
 		const char* assembly_name = mono_assembly_name_get_name(aname);
 		void* loaded_bytes;
 		int loaded_bytes_len;
@@ -22,10 +32,13 @@ MonoAssembly* dotnetisolator_assembly_search_hook(MonoAssemblyName* aname, void*
 		if (success) {
 			MonoImageOpenStatus status;
 			MonoImage* image = mono_image_open_from_data(loaded_bytes, loaded_bytes_len, 1, &status);
-
-			assembly_search_hook_in_progress = 1;
-			result = mono_assembly_load_from(image, assembly_name, &status);
-			assembly_search_hook_in_progress = 0;
+            free(loaded_bytes); // need_copy=1 gives the image its own storage.
+            if (image) {
+                assembly_search_hook_in_progress = 1;
+                result = mono_assembly_load_from(image, assembly_name, &status);
+                assembly_search_hook_in_progress = 0;
+                mono_image_close(image); // A successfully loaded assembly holds its own image reference.
+            }
 		}
 	}
 

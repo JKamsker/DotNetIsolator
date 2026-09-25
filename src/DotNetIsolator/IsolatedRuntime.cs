@@ -1,5 +1,6 @@
 ﻿using DotNetIsolator.Internal;
 using System.Collections.Concurrent;
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -324,14 +325,21 @@ public class IsolatedRuntime : IDisposable
         where T0 : unmanaged
         where TRes : unmanaged
     {
-        var count = args.Length;
-        if (count == 0)
-        {
-            return Array.Empty<TRes>();
-        }
+        var results = args.IsEmpty ? Array.Empty<TRes>() : new TRes[args.Length];
+        InvokeScalarBatchInto(monoMethodPtr, instance, args, results.AsSpan(), argKind, resultKind);
+        return results;
+    }
 
-        var argsPtr = CopyValue<T0>(args, addLengthPrefix: false);
+    internal void InvokeScalarBatchInto<T0, TRes>(int monoMethodPtr, IsolatedObject? instance,
+        ReadOnlySpan<T0> args, Span<TRes> destination, int argKind, int resultKind)
+        where T0 : unmanaged
+        where TRes : unmanaged
+    {
+        var count = args.Length;
+        if (destination.Length < count) throw new ArgumentException("The destination is shorter than the batch.", nameof(destination));
+        if (count == 0) return;
         var resultsByteCount = checked(count * Unsafe.SizeOf<TRes>());
+        var argsPtr = CopyValue<T0>(args, addLengthPrefix: false);
         var resultsPtr = _malloc(resultsByteCount);
         if (resultsPtr == 0)
         {
@@ -363,9 +371,7 @@ public class IsolatedRuntime : IDisposable
                 throw new IsolatedException(ReadDotNetString(invocation.ErrorMessage) ?? "The batch method call failed.");
             }
 
-            var results = new TRes[count];
-            _memory.GetSpan<byte>(resultsPtr, resultsByteCount).CopyTo(MemoryMarshal.AsBytes(results.AsSpan()));
-            return results;
+            _memory.GetSpan<byte>(resultsPtr, resultsByteCount).CopyTo(MemoryMarshal.AsBytes(destination[..count]));
         }
         finally
         {
@@ -559,9 +565,27 @@ public class IsolatedRuntime : IDisposable
         }
     }
 
-    // Copy a primitive array/list into fresh guest storage. Native scalar, void and array
-    // results avoid serialization; all other result types use the managed fallback.
-    internal TRes InvokeBlittableArrayArgMethod<T, TRes>(int monoMethodPtr, IsolatedObject? instance, ReadOnlySpan<T> arg, int elementKind, out bool supported, bool isList = false, bool isVoid = false) where T : unmanaged
+    // Encode strings once into the existing bulk argument transport.
+    internal TRes InvokeStringArgMethod<TRes>(int method, IsolatedObject? instance, string text, out bool supported, bool isVoid)
+    {
+        var count = Encoding.UTF8.GetByteCount(text);
+        var rented = count > 256 ? ArrayPool<byte>.Shared.Rent(count) : null;
+        try
+        {
+            Span<byte> bytes = rented is null ? stackalloc byte[count] : rented.AsSpan(0, count);
+            Encoding.UTF8.GetBytes(text, bytes);
+            return InvokeBlittableArrayArgMethod<byte, TRes>(method, instance, bytes, PrimitiveScalarCodec.Byte,
+                out supported, isVoid: isVoid, isString: true);
+        }
+        finally
+        {
+            if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    // Copy a primitive array/list or UTF-8 string into fresh guest storage.
+    // Scalar, void and primitive-array results bypass serialization.
+    internal TRes InvokeBlittableArrayArgMethod<T, TRes>(int monoMethodPtr, IsolatedObject? instance, ReadOnlySpan<T> arg, int elementKind, out bool supported, bool isList = false, bool isVoid = false, bool isString = false) where T : unmanaged
     {
         supported = true;
         var argDataPtr = arg.Length == 0 ? 0 : CopyValue<T>(arg, addLengthPrefix: false);
@@ -579,7 +603,7 @@ public class IsolatedRuntime : IDisposable
                 ArgLength = arg.Length,
                 ArgElementSize = Unsafe.SizeOf<T>(),
                 ArgElementKind = elementKind,
-                ArgumentIsList = isList ? 1 : 0,
+                ArgumentShape = isString ? 2 : isList ? 1 : 0,
                 ResultKind = isVoid ? -1 : CollectionResult<TRes>.Kind,
                 ResultElementKind = CollectionResult<TRes>.ElementKind,
             };
@@ -834,6 +858,9 @@ public class IsolatedRuntime : IDisposable
 
     internal int ResolveCallback(string name) => _callbacks.Resolve(name);
 
+    internal long InvokeMultiScalarCallback(int callbackId, int kinds, long a0, long a1, long a2, long a3)
+        => _callbacks.InvokeScalars(callbackId, kinds, a0, a1, a2, a3);
+
     internal long InvokeScalarCallback(int callbackId, long argBits, int argKind, int resultKind)
         => _callbacks.InvokeScalar(callbackId, argBits, argKind, resultKind);
 
@@ -858,13 +885,16 @@ public class IsolatedRuntime : IDisposable
 
     private int CopyCallbackResponse(HostCallbackResponse response, int resultPtrPtr, int resultLengthPtr)
     {
-        var resultBytes = response.ResultBytes;
-        // A non-null empty result still needs an address to distinguish it from null.
-        var resultPtr = resultBytes is null ? 0 : resultBytes.Length == 0 ? _malloc(1) : CopyValue<byte>(resultBytes, false);
-        if (resultBytes is not null && resultPtr == 0) throw new InvalidOperationException("Could not allocate callback result.");
-        _memory.WriteInt32(resultPtrPtr, resultPtr);
-        _memory.WriteInt32(resultLengthPtr, resultBytes is null ? 0 : resultBytes.Length);
-        return response.IsSuccess ? 1 : 0;
+        using (response)
+        {
+            var resultBytes = response.Span;
+            // A non-null empty result still needs an address to distinguish it from null.
+            var resultPtr = !response.HasResult ? 0 : resultBytes.Length == 0 ? _malloc(1) : CopyValue<byte>(resultBytes, false);
+            if (response.HasResult && resultPtr == 0) throw new InvalidOperationException("Could not allocate callback result.");
+            _memory.WriteInt32(resultPtrPtr, resultPtr);
+            _memory.WriteInt32(resultLengthPtr, resultBytes.Length);
+            return response.IsSuccess ? 1 : 0;
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]

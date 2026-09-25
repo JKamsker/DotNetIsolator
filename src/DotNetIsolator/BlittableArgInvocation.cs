@@ -15,7 +15,7 @@ internal struct BlittableArgInvocation
     public int ResultSerialized;
     public int ResultSerializedLength;
     public int ResultSerializedGCHandle;
-    public int ArgumentIsList;
+    public int ArgumentShape; // 0 array, 1 list, 2 UTF-8 string
     public int ResultKind; // 0 serialized, -1 void, -2 array, positive scalar kind
     public int ResultElementKind;
     public int Reserved; // align ResultBits to eight bytes on both sides

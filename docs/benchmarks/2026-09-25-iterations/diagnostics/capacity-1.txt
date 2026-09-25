@@ -1,0 +1,10 @@
+.NET 10.0.11; Ubuntu 24.04.3 LTS; X64
+int control: median 282.1 ns/op; range 272.3–402.7; 0.0 host B/op
+callback arity 2: median 2294.0 ns/op; range 1896.5–3273.1; 0.0 host B/op
+callback arity 3: median 3026.9 ns/op; range 2426.8–5765.1; 0.0 host B/op
+callback arity 4: median 2483.6 ns/op; range 2462.8–2499.1; 0.0 host B/op
+callback void: median 1465.8 ns/op; range 1441.4–1514.9; 0.0 host B/op
+batch 1024 per element: median 34.9 ns/op; range 34.4–37.0; 4.0 host B/op
+List<string>[256] roundtrip: median 1046271.0 ns/op; range 1020483.0–1413171.5; 15416.0 host B/op
+Dictionary<string,int>[256] roundtrip: median 1888140.0 ns/op; range 1881918.0–1964837.0; 43616.0 host B/op
+Sink: 307200

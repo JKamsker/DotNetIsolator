@@ -1,6 +1,9 @@
 # Performance
 
-The latest callback measurements are in [the callback follow-up report](performance-callbacks-2026-09-25.md).
+The latest measurements are in [the continued-iteration report](performance-iterations-2026-09-25.md),
+covering multi-argument callbacks, strings, collections, batch output storage,
+and repeated assembly lookup. Earlier callback measurements are in
+[the callback follow-up report](performance-callbacks-2026-09-25.md).
 The preceding scalar, collection, serialization and batch measurements are in
 [the September 2026 fast-path report](performance-2026-09-25.md). Earlier
 measurements below are retained as historical comparisons on a different machine.
@@ -144,6 +147,24 @@ transported back over an already-authorized export call.
 
 The September 2026 additions are:
 
+* Further iterations extend numeric callback transport and typed overloads to
+  arities 2–4, and add primitive void/discard callback dispatch. Callback metadata
+  follows the delegate signature, preserving closed-static and multicast calls.
+* Generic callback envelopes reuse a leased writer, and host generic callback
+  results use the serializer's buffer through the synchronous guest copy.
+* String arguments use the existing bulk transport frame; string results are
+  encoded natively using the existing wire format. Null, object/interface and
+  async argument cases keep their appropriate fallback.
+* Collection deserialization uses bounded initial capacities and cached typed
+  factories; dictionaries enumerate typed entries; string collections use direct
+  loops with the same null/UTF-8/depth semantics.
+* Assembly lookup first checks Mono's loaded assemblies with a recursion guard.
+  This removes repeated host filesystem probes without a separate name cache.
+  Temporary image references and copied transfer buffers are released.
+* A destination-span batch overload removes the host result-array allocation.
+  It copies only after success and supports overlapping input/output.
+  See the [iteration report](performance-iterations-2026-09-25.md) for comparisons.
+
 * Direct callback transport: scalar arguments/results cross the Wasm import in
   registers; only failures require host access to the guest error slot. Raw
   byte-array callbacks use numeric IDs and pinned argument descriptors instead
@@ -173,7 +194,8 @@ The September 2026 additions are:
   results use the writer's buffer plus logical length. Guest result buffers stay
   leased and pinned until the host releases their handle, including when
   deserialization throws. Reentrant calls get independent buffers. APIs that
-  require an owned `byte[]`, including generic callback envelopes, still copy.
+  require an owned `byte[]` still copy; the later iteration also leases generic
+  callback envelopes and host callback result buffers.
 
 The following earlier paths were tested and kept:
 
@@ -365,6 +387,14 @@ The following earlier paths were tested and kept:
   The managed batch dispatcher described above now removes that cost.
 
 ### Rejected
+
+
+* Batch pointer indexing did not produce a repeatable improvement over the
+  managed span loop. Four-way unrolling consistently increased time from about
+  44 to 51 ns/element, with similar scalar controls. Both were removed.
+* Capacity constructors through `Activator.CreateInstance` regressed small
+  collections; cached typed constructors replaced that prototype. Raw diagnostic
+  runs and limitations are in the [iteration report](performance-iterations-2026-09-25.md).
 
 The following paths were tested and rejected so they do not need to be
 rediscovered without a new runtime, SDK, or workload:
