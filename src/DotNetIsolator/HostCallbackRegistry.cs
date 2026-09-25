@@ -1,6 +1,9 @@
 using DotNetIsolator.Internal;
 using MessagePack;
 using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using Wasmtime;
 using System.Text;
 
 namespace DotNetIsolator;
@@ -56,6 +59,49 @@ internal sealed class HostCallbackRegistry
             Console.Error.WriteLine(ex.ToString());
             return HostCallbackResponse.Failure(HiddenFailureMessage);
         }
+    }
+
+    public HostCallbackResponse InvokeRaw(int callbackId, Memory memory, int argsPtr, int count)
+    {
+        try
+        {
+            if ((uint)(callbackId - 1) >= (uint)_callbacksById.Count)
+                throw new InvalidOperationException("Unknown callback ID.");
+            var callback = _callbacksById[callbackId - 1];
+            if (count != callback.ParameterTypes.Length)
+                throw new InvalidOperationException("Raw callback argument count does not match its registration.");
+            var args = MemoryMarshal.Cast<byte, RawCallbackArgument>(memory.GetSpan(argsPtr, checked(count * Unsafe.SizeOf<RawCallbackArgument>())));
+
+            if (callback.Delegate is Func<byte[]?, byte[]?> single && count == 1)
+                return HostCallbackResponse.Success(single(CopyRawArgument(memory, args[0])));
+            if (callback.Delegate is Func<byte[]?> zero && count == 0)
+                return HostCallbackResponse.Success(zero());
+
+            var values = count == 0 ? Array.Empty<object?>() : new object?[count];
+            for (var i = 0; i < count; i++) values[i] = CopyRawArgument(memory, args[i]);
+            return HostCallbackResponse.Success((byte[]?)callback.Delegate.DynamicInvoke(values));
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex.ToString());
+            return HostCallbackResponse.Failure(HiddenFailureMessage);
+        }
+    }
+
+    private static byte[]? CopyRawArgument(Memory memory, RawCallbackArgument arg)
+    {
+        if (arg.Length == -1) return null;
+        if (arg.Length < 0) throw new InvalidOperationException("Invalid raw callback argument length.");
+        return memory.GetSpan(arg.Data, arg.Length).ToArray();
+    }
+
+    // Layout matches RawCallbackArgument in native/host_callback.c. The handle is guest-owned.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RawCallbackArgument
+    {
+        public int Data;
+        public int Length;
+        public int GuestHandle;
     }
 
     public long InvokeScalar(int callbackId, long argBits, int argKind, int resultKind)

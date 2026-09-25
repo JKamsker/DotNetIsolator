@@ -10,9 +10,9 @@ internal static class Program
         CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
         CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
 
-        if (args.Contains("--fast-paths"))
+        if (args.Contains("--fast-paths") || args.Contains("--callback-paths"))
         {
-            FastPathBenchmarks.Run();
+            FastPathBenchmarks.Run(callbacksOnly: args.Contains("--callback-paths"));
             return 0;
         }
 

@@ -1,0 +1,19 @@
+.NET 10.0.11; Ubuntu 24.04.3 LTS; X64
+int -> int: median 275.0 ns/op; range 270.4–285.6; 0.0 host B/op
+double -> double: median 353.1 ns/op; range 351.7–357.3; 0.0 host B/op
+long -> long: median 360.8 ns/op; range 341.4–464.2; 0.0 host B/op
+scalar arity 2: median 363.4 ns/op; range 361.2–364.8; 0.0 host B/op
+scalar arity 3: median 385.2 ns/op; range 378.8–400.1; 0.0 host B/op
+scalar arity 4: median 408.5 ns/op; range 398.5–417.7; 0.0 host B/op
+callback params: median 1538.7 ns/op; range 1532.7–1558.4; 0.0 host B/op
+callback typed: median 1063.3 ns/op; range 1057.2–1187.2; 0.0 host B/op
+callback typed double: median 1118.9 ns/op; range 1113.9–1201.3; 0.0 host B/op
+callback raw byte[32]: median 1696.8 ns/op; range 1690.3–1698.1; 56.0 host B/op
+callback raw byte[65536]: median 23024.5 ns/op; range 22938.1–23710.4; 65560.0 host B/op
+double[32] -> int: median 874.6 ns/op; range 862.6–889.9; 0.0 host B/op
+double[32] -> void: median 795.7 ns/op; range 794.1–814.5; 0.0 host B/op
+double[32] -> double[]: median 1030.6 ns/op; range 1025.7–1041.6; 280.0 host B/op
+List<double>[32] -> int: median 1213.8 ns/op; range 1210.3–1224.3; 0.0 host B/op
+nested DTO roundtrip (32 KiB): median 624674.4 ns/op; range 535550.2–944140.0; 36776.9 host B/op
+batch int[1024] (per element): median 46.8 ns/op; range 43.0–57.3; 4.0 host B/op
+Sink: 190320000

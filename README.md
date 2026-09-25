@@ -320,6 +320,10 @@ var sum = DotNetIsolatorHost.Invoke<int>("addTwoNumbers", 123, 456);
 var hostTime = DotNetIsolatorHost.Invoke<DateTime>("getHostTime");
 ```
 
+For one primitive argument and result, `DotNetIsolatorHost.Invoke<TArg, TResult>(name, arg)` avoids the params array and passes scalar values directly through the Wasm import. Successful callback-name lookups are cached as numeric IDs.
+
+For byte-array arguments and results, `DotNetIsolatorHost.InvokeRaw(name, bytes)` uses direct bulk transport without a serialization envelope. The host receives its own argument arrays, and the guest receives its own result array, so either side can retain or modify its copy independently. Null and empty arrays remain distinct.
+
 Note that if you're calling via a lambda, then the guest code is in the same assembly as the host code, so in that case you need the host project to reference the `DotNetIsolator.Guest` package.
 
 ## Security notes

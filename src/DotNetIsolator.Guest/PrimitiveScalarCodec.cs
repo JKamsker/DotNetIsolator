@@ -1,18 +1,4 @@
-using System.Runtime.InteropServices;
-
 namespace DotNetIsolator.Internal;
-
-// Transports a scalar callback across the boundary through guest memory. Shared by the host and
-// guest so both sides agree on the layout.
-[StructLayout(LayoutKind.Sequential)]
-internal struct ScalarCallInvocation
-{
-    public long ArgBits;
-    public int ArgKind;
-    public int ResultKind;
-    public long ResultBits;
-    public int Error;
-}
 
 // Bit-packs primitive scalar values into a 64-bit register, shared by the host and guest sides of
 // the scalar callback fast path. Element-kind tags match the native element_class_for_kind switch.

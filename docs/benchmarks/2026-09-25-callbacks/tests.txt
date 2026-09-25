@@ -1,0 +1,4 @@
+Test run for /home/jonas/priv/repos/DotNetIsolator/test/DotNetIsolator.Test/bin/Release/net10.0/DotNetIsolator.Test.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:   159, Skipped:     0, Total:   159, Duration: 4 s - DotNetIsolator.Test.dll (net10.0)

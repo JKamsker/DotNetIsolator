@@ -32,13 +32,18 @@ public static class DotNetIsolatorHost
 
     public static unsafe byte[] InvokeRaw<T>(string callbackName, params byte[]?[] args)
     {
-        return PerformCall<byte[]>(new GuestToHostCall
+        ArgumentNullException.ThrowIfNull(args);
+        var success = Interop.CallHostRaw(ResolveCallback(callbackName, raw: true), args, out var resultPtr, out var resultLength);
+        try
         {
-            CallbackName = callbackName,
-            Args = args,
-            ArgsLength = args.Length,
-            IsRawCall = true,
-        });
+            if (!success)
+                throw new InvalidOperationException("Call to host failed: The call failed. See host console logs for details.");
+            return resultPtr is null ? null! : new ReadOnlySpan<byte>(resultPtr, resultLength).ToArray();
+        }
+        finally
+        {
+            if (resultPtr is not null) Interop.FreeHostCallResult(resultPtr);
+        }
     }
 
     public static unsafe T Invoke<T>(string callbackName, params object[] args)
@@ -94,14 +99,13 @@ public static class DotNetIsolatorHost
 
     private static unsafe long CallScalar(string name, long bits, int argKind, int resultKind)
     {
-        var invocation = new ScalarCallInvocation { ArgBits = bits, ArgKind = argKind, ResultKind = resultKind };
-        Interop.CallHostScalar(ResolveCallback(name), &invocation);
-        if (invocation.Error != 0)
+        var result = Interop.CallHostScalar(ResolveCallback(name), argKind | (resultKind << 8), out var error, bits);
+        if (error != 0)
             throw new InvalidOperationException("Call to host failed: The call failed. See host console logs for details.");
-        return invocation.ResultBits;
+        return result;
     }
 
-    private static unsafe int ResolveCallback(string name)
+    private static unsafe int ResolveCallback(string name, bool raw = false)
     {
         ArgumentNullException.ThrowIfNull(name);
         if (CallbackIds.TryGetValue(name, out var id)) return id;
@@ -118,7 +122,9 @@ public static class DotNetIsolatorHost
             if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
         }
         if (id == 0)
-            throw new InvalidOperationException("Call to host failed: The call failed. See host console logs for details.");
+            throw new InvalidOperationException(raw
+                ? $"Call to host failed: There is no registered callback with name '{name}'"
+                : "Call to host failed: The call failed. See host console logs for details.");
         CallbackIds.Add(name, id);
         return id;
     }

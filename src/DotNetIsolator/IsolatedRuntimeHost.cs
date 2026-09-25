@@ -386,7 +386,8 @@ public class IsolatedRuntimeHost : IDisposable
         Linker.DefineFunction("dotnetisolator", "request_assembly", (CallerFunc<int, int, int, int, int>)HandleRequestAssembly);
         Linker.DefineFunction("dotnetisolator", "call_host", (CallerFunc<int, int, int, int, int>)HandleCallHost);
         Linker.DefineFunction("dotnetisolator", "resolve_callback", (CallerFunc<int, int, int>)HandleResolveCallback);
-        Linker.DefineFunction("dotnetisolator", "call_host_scalar", (CallerAction<int, int>)HandleCallHostScalar);
+        Linker.DefineFunction("dotnetisolator", "call_host_raw", (CallerFunc<int, int, int, int, int, int>)HandleCallHostRaw);
+        Linker.DefineFunction("dotnetisolator", "call_host_scalar", (CallerFunc<int, long, int, int, long>)HandleCallHostScalar);
     }
 
     private void ThrowIfDisposed()
@@ -403,24 +404,23 @@ public class IsolatedRuntimeHost : IDisposable
         return IsolatedRuntime.FromStore(caller.Store).ResolveCallback(memory.ReadString(namePtr, nameLen));
     }
 
-    private void HandleCallHostScalar(Caller caller, int callbackId, int invocationPtr)
+    private long HandleCallHostScalar(Caller caller, int callbackId, long bits, int kinds, int errorPtr)
     {
-        var memory = caller.GetMemory("memory") ?? throw new InvalidOperationException("Caller lacks required export 'memory'");
-        var span = memory.GetSpan(invocationPtr, Marshal.SizeOf<ScalarCallInvocation>());
-        ref var invocation = ref MemoryMarshal.AsRef<ScalarCallInvocation>(span);
-        invocation.Error = 0;
         try
         {
-            var runtime = IsolatedRuntime.FromStore(caller.Store);
-            invocation.ResultBits = runtime.InvokeScalarCallback(callbackId, invocation.ArgBits, invocation.ArgKind, invocation.ResultKind);
+            return IsolatedRuntime.FromStore(caller.Store).InvokeScalarCallback(callbackId, bits, kinds & 255, (kinds >> 8) & 255);
         }
         catch (Exception ex)
         {
-            // Mirror the opaque failure behavior of the general callback path: don't leak host detail.
             Console.Error.WriteLine(ex.ToString());
-            invocation.Error = 1;
+            var memory = caller.GetMemory("memory") ?? throw new InvalidOperationException("Caller lacks memory");
+            memory.WriteInt32(errorPtr, 1);
+            return 0;
         }
     }
+
+    private int HandleCallHostRaw(Caller caller, int callbackId, int argsPtr, int count, int resultPtr, int resultLengthPtr)
+        => IsolatedRuntime.FromStore(caller.Store).AcceptRawCallFromGuest(callbackId, argsPtr, count, resultPtr, resultLengthPtr);
 
     private int HandleRequestAssembly(Caller caller, int assemblyNamePtr, int assemblyNameLen, int suppliedBytesPtr, int suppliedBytesLen)
     {

@@ -7,6 +7,7 @@ public sealed class BenchmarkTarget
 {
     public const int BlittableArrayLength = 32_768;
 
+    private readonly byte[] _smallBuffer = CreateBuffer(32);
     private readonly byte[] _buffer = CreateBuffer(4096);
     private readonly byte[] _largeBuffer = CreateBuffer(64 * 1024);
     private readonly List<int> _numbers = CreateNumbers();
@@ -115,6 +116,9 @@ public sealed class BenchmarkTarget
     [MethodImpl(MethodImplOptions.NoInlining)]
     public int CallRawBufferCallback()
         => DotNetIsolatorHost.InvokeRaw("raw-buffer-callback", _largeBuffer).Length;
+
+    public int CallSmallRawCallback() => DotNetIsolatorHost.InvokeRaw("raw-buffer-callback", _smallBuffer).Length;
+    public double CallDoubleCallback(double value) => DotNetIsolatorHost.Invoke<double, double>("double-callback", value);
 
     public int Add2(int a, int b) => a + b;
     public double Add3(int a, double b, long c) => a + b + c;

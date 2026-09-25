@@ -1,7 +1,8 @@
 # Performance
 
-The latest scalar, callback, collection, serialization and batch measurements are
-in [the September 2026 fast-path report](performance-2026-09-25.md). Earlier
+The latest callback measurements are in [the callback follow-up report](performance-callbacks-2026-09-25.md).
+The preceding scalar, collection, serialization and batch measurements are in
+[the September 2026 fast-path report](performance-2026-09-25.md). Earlier
 measurements below are retained as historical comparisons on a different machine.
 
 DotNetIsolator has two separate costs:
@@ -142,6 +143,14 @@ transported back over an already-authorized export call.
 ### Accepted
 
 The September 2026 additions are:
+
+* Direct callback transport: scalar arguments/results cross the Wasm import in
+  registers; only failures require host access to the guest error slot. Raw
+  byte-array callbacks use numeric IDs and pinned argument descriptors instead
+  of a MessagePack envelope. Common zero/one-argument raw delegates also bypass
+  reflection. Host arguments and guest results remain independent owned copies,
+  including across nested callbacks and guest collection. See the
+  [callback follow-up](performance-callbacks-2026-09-25.md) for measurements.
 
 * Wasm multi-value scalar returns: small LLVM Wasm assembly wrappers return
   `(i64 resultBits, i32 errorPtr)` to Wasmtime tuple delegates. A private native
@@ -326,8 +335,9 @@ The following earlier paths were tested and kept:
   safe even when the rented array is larger than the callback arity.
 * Scalar callback fast path: `DotNetIsolatorHost.Invoke<TRes>(name, arg)` for a
   callback whose single argument (if any) and result are blittable primitives
-  travels bit-packed through a small invocation struct in guest memory via a
-  dedicated `call_host_scalar` host import, skipping the MessagePack envelope and
+  originally traveled bit-packed through a small invocation struct in guest
+  memory. The direct transport above now passes those bits in registers through
+  the `call_host_scalar` host import, skipping the MessagePack envelope and
   the object-graph (de)serialization on both sides. The host caches a typed
   scalar invoker at callback registration, so the scalar dispatch path does not
   allocate a reflection argument array. Other callback shapes keep using the
@@ -358,6 +368,17 @@ The following earlier paths were tested and kept:
 
 The following paths were tested and rejected so they do not need to be
 rediscovered without a new runtime, SDK, or workload:
+
+* Cached guest scalar codec delegates: replacing interpreted generic type checks
+  with cached `Func<T, long>`/`Func<long, T>` delegates measured 1,077 ns versus
+  1,066 ns for typed int callbacks, and 1,135 ns versus 1,117 ns for double in
+  exploratory paired runs. The added delegate calls did not improve this
+  workload, so the prototype was removed.
+* Arbitrary scalar callback internal-call signatures: an initial direct ABI
+  required a `wasm_invoke_liliii` wrapper absent from the generated WASI runtime
+  and failed at invocation. Packing the two kind tags and ordering parameters
+  to use the existing `wasm_invoke_liiil` wrapper fixed the retained direct
+  transport; changing internal-call signatures requires checking those wrappers.
 
 * `wasmtime wizer` / standalone Wizer: the current .NET 10 WASI module imports
   the WASI Preview 2 surface and DotNetIsolator host functions during startup.

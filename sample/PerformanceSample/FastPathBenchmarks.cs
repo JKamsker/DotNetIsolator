@@ -8,12 +8,14 @@ namespace PerformanceSample;
 // allocations are host-thread bytes only (they do not include the guest heap).
 internal static class FastPathBenchmarks
 {
-    public static void Run()
+    public static void Run(bool callbacksOnly = false)
     {
         Console.WriteLine($"{RuntimeInformation.FrameworkDescription}; {RuntimeInformation.OSDescription}; {RuntimeInformation.ProcessArchitecture}");
         using var host = new IsolatedRuntimeHost().WithBinDirectoryAssemblyLoader();
         using var runtime = new IsolatedRuntime(host);
         runtime.RegisterCallback("increment-callback", (int x) => x + 1);
+        runtime.RegisterCallback("raw-buffer-callback", (byte[] bytes) => bytes);
+        runtime.RegisterCallback("double-callback", (double x) => x + 1);
         var target = runtime.CreateObject<BenchmarkTarget>();
         IsolatedMethod Method(string name, int count) => target.FindMethod(name, count);
         var i32 = Method(nameof(BenchmarkTarget.Increment), 1);
@@ -24,6 +26,9 @@ internal static class FastPathBenchmarks
         var add4 = Method(nameof(BenchmarkTarget.Add4), 4);
         var callback = Method(nameof(BenchmarkTarget.CallIncrementCallback), 1);
         var typed = Method(nameof(BenchmarkTarget.CallTypedIncrementCallback), 1);
+        var rawSmall = Method(nameof(BenchmarkTarget.CallSmallRawCallback), 0);
+        var rawLarge = Method(nameof(BenchmarkTarget.CallRawBufferCallback), 0);
+        var doubleCallback = Method(nameof(BenchmarkTarget.CallDoubleCallback), 1);
         var length = Method(nameof(BenchmarkTarget.ArrayLength), 1);
         var consume = Method(nameof(BenchmarkTarget.ConsumeArray), 1);
         var echo = Method(nameof(BenchmarkTarget.EchoArray), 1);
@@ -37,6 +42,19 @@ internal static class FastPathBenchmarks
             Items = Enumerable.Range(0, 8).Select(x => new BenchmarkPayload { Id = x, Name = "nested" }).ToList(),
         };
         var batch = Enumerable.Range(0, 1024).ToArray();
+        if (callbacksOnly)
+        {
+            // Longer samples make callback comparisons less sensitive to brief scheduling noise.
+            Measure("int -> int control", 1_000_000, () => i32.Invoke<int, int>(target, 7));
+            Measure("callback params", 200_000, () => callback.Invoke<int, int>(target, 7));
+            Measure("callback typed", 200_000, () => typed.Invoke<int, int>(target, 7));
+            Measure("callback typed double", 200_000, () => (long)doubleCallback.Invoke<double, double>(target, 7));
+            Measure("callback raw byte[32]", 50_000, () => rawSmall.Invoke<int>(target));
+            Measure("callback raw byte[65536]", 5000, () => rawLarge.Invoke<int>(target));
+            target.ReleaseGCHandle();
+            Console.WriteLine($"Sink: {MeasurementSink.Value}");
+            return;
+        }
         Measure("int -> int", 200_000, () => i32.Invoke<int, int>(target, 7));
         Measure("double -> double", 200_000, () => (long)f64.Invoke<double, double>(target, 7));
         Measure("long -> long", 200_000, () => i64.Invoke<long, long>(target, 7));
@@ -45,6 +63,9 @@ internal static class FastPathBenchmarks
         Measure("scalar arity 4", 20_000, () => add4.Invoke<int, long, short, byte, long>(target, 3, 4, 5, 6));
         Measure("callback params", 50_000, () => callback.Invoke<int, int>(target, 7));
         Measure("callback typed", 50_000, () => typed.Invoke<int, int>(target, 7));
+        Measure("callback typed double", 50_000, () => (long)doubleCallback.Invoke<double, double>(target, 7));
+        Measure("callback raw byte[32]", 10_000, () => rawSmall.Invoke<int>(target));
+        Measure("callback raw byte[65536]", 1000, () => rawLarge.Invoke<int>(target));
         Measure("double[32] -> int", 10_000, () => length.Invoke<double[], int>(target, array));
         Measure("double[32] -> void", 10_000, () => { consume.InvokeVoid(target, array); return 0; });
         Measure("double[32] -> double[]", 10_000, () => echo.Invoke<double[], double[]>(target, array).Length);

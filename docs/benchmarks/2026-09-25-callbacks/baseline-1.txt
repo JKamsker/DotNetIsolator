@@ -1,0 +1,8 @@
+.NET 10.0.11; Ubuntu 24.04.3 LTS; X64
+int -> int control: median 275.8 ns/op; range 272.8–283.7; 0.0 host B/op
+callback params: median 1960.2 ns/op; range 1821.1–2339.5; 0.0 host B/op
+callback typed: median 1375.0 ns/op; range 1368.0–1381.8; 0.0 host B/op
+callback typed double: median 1874.2 ns/op; range 1450.0–2317.3; 0.0 host B/op
+callback raw byte[32]: median 6692.7 ns/op; range 6655.2–6801.6; 216.0 host B/op
+callback raw byte[65536]: median 54394.5 ns/op; range 54094.5–68400.5; 65721.3 host B/op
+Sink: 1769472000

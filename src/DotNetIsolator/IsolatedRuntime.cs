@@ -850,8 +850,18 @@ public class IsolatedRuntime : IDisposable
             }
         }
 
+        return CopyCallbackResponse(response, resultPtrPtr, resultLengthPtr);
+    }
+
+    internal int AcceptRawCallFromGuest(int callbackId, int argsPtr, int count, int resultPtrPtr, int resultLengthPtr)
+        => CopyCallbackResponse(_callbacks.InvokeRaw(callbackId, _memory, argsPtr, count), resultPtrPtr, resultLengthPtr);
+
+    private int CopyCallbackResponse(HostCallbackResponse response, int resultPtrPtr, int resultLengthPtr)
+    {
         var resultBytes = response.ResultBytes;
-        var resultPtr = resultBytes is null ? 0 : CopyValue<byte>(resultBytes, false);
+        // A non-null empty result still needs an address to distinguish it from null.
+        var resultPtr = resultBytes is null ? 0 : resultBytes.Length == 0 ? _malloc(1) : CopyValue<byte>(resultBytes, false);
+        if (resultBytes is not null && resultPtr == 0) throw new InvalidOperationException("Could not allocate callback result.");
         _memory.WriteInt32(resultPtrPtr, resultPtr);
         _memory.WriteInt32(resultLengthPtr, resultBytes is null ? 0 : resultBytes.Length);
         return response.IsSuccess ? 1 : 0;
